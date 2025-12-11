@@ -106,7 +106,8 @@ class StatusBarController {
             context.setLineCap(.round)
 
             // Draw arc from roughly 45° to 315° (leaving a gap for the "C" opening)
-            context.addArc(center: center, radius: radius, startAngle: .pi * 0.25, endAngle: .pi * 1.75, clockwise: true)
+            context.addArc(
+                center: center, radius: radius, startAngle: .pi * 0.25, endAngle: .pi * 1.75, clockwise: true)
             context.strokePath()
 
             return true
@@ -152,7 +153,8 @@ class StatusBarController {
 
         menu.addItem(NSMenuItem.separator())
 
-        let quitItem = NSMenuItem(title: "Quit Cistern", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quitItem = NSMenuItem(
+            title: "Quit Cistern", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
 
         statusItem.menu = menu
@@ -196,18 +198,23 @@ class StatusBarController {
             branch = build.branch
         }
 
-        item.attributedTitle = formatMenuTitle(projectName: build.projectName, branch: branch, workflowName: build.workflowName, duration: build.durationString)
+        item.attributedTitle = formatMenuTitle(
+            projectName: build.projectName, branch: branch, workflowName: build.workflowName,
+            duration: build.durationString)
 
         return item
     }
 
-    private func formatMenuTitle(projectName: String, branch: String, workflowName: String, duration: String) -> NSAttributedString {
+    private func formatMenuTitle(
+        projectName: String, branch: String, workflowName: String, duration: String
+    ) -> NSAttributedString {
         let title = "\(projectName) • \(branch) • \(workflowName) "
         let result = NSMutableAttributedString(string: title)
-        result.append(NSAttributedString(
-            string: duration,
-            attributes: [.foregroundColor: NSColor.secondaryLabelColor]
-        ))
+        result.append(
+            NSAttributedString(
+                string: duration,
+                attributes: [.foregroundColor: NSColor.secondaryLabelColor]
+            ))
         return result
     }
 
@@ -291,7 +298,9 @@ class StatusBarController {
                     } else {
                         branch = build.branch
                     }
-                    item.attributedTitle = formatMenuTitle(projectName: build.projectName, branch: branch, workflowName: build.workflowName, duration: build.durationString)
+                    item.attributedTitle = formatMenuTitle(
+                        projectName: build.projectName, branch: branch, workflowName: build.workflowName,
+                        duration: build.durationString)
                 }
             }
         }
@@ -326,7 +335,7 @@ class StatusBarController {
         // Show loading animation only on manual refresh or initial load
         if showLoading {
             isLoading = true
-            stopAnimation() // Stop running builds animation if active
+            stopAnimation()  // Stop running builds animation if active
             startLoadingAnimation()
         }
 
@@ -356,7 +365,8 @@ class StatusBarController {
 
     @objc private func openBuild(_ sender: NSMenuItem) {
         guard let build = sender.representedObject as? Build,
-              let url = URL(string: build.webURL) else { return }
+            let url = URL(string: build.webURL)
+        else { return }
         NSWorkspace.shared.open(url)
     }
 

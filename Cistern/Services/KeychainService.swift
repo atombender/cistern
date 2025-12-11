@@ -8,9 +8,9 @@ class KeychainService {
     // Use UserDefaults for development (avoids Keychain prompts on rebuild)
     // In production with proper code signing, Keychain would work without prompts
     #if DEBUG
-    private static let useKeychain = false
+        private static let useKeychain = false
     #else
-    private static let useKeychain = true
+        private static let useKeychain = true
     #endif
 
     private static let tokenKey = "dev-api-token"
@@ -54,15 +54,16 @@ class KeychainService {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
+            kSecMatchLimit as String: kSecMatchLimitOne,
         ]
 
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
 
         guard status == errSecSuccess,
-              let data = result as? Data,
-              let token = String(data: data, encoding: .utf8) else {
+            let data = result as? Data,
+            let token = String(data: data, encoding: .utf8)
+        else {
             return nil
         }
 
@@ -81,7 +82,7 @@ class KeychainService {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
         ]
 
         let status = SecItemAdd(query as CFDictionary, nil)
@@ -93,7 +94,7 @@ class KeychainService {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account
+            kSecAttrAccount as String: account,
         ]
 
         let status = SecItemDelete(query as CFDictionary)

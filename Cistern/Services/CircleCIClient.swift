@@ -183,10 +183,14 @@ class CircleCIClient {
 
         if latestWorkflow.stoppedAt != nil {
             // Completed build - return final duration
-            return PipelineInfo(status: status, workflowName: latestWorkflow.name, completedDuration: latestWorkflow.duration, startedAt: nil)
+            return PipelineInfo(
+                status: status, workflowName: latestWorkflow.name, completedDuration: latestWorkflow.duration,
+                startedAt: nil)
         } else {
             // Running build - return start time for live updates
-            return PipelineInfo(status: status, workflowName: latestWorkflow.name, completedDuration: nil, startedAt: latestWorkflow.createdAt)
+            return PipelineInfo(
+                status: status, workflowName: latestWorkflow.name, completedDuration: nil,
+                startedAt: latestWorkflow.createdAt)
         }
     }
 

@@ -44,17 +44,19 @@ class SettingsWindowController: NSWindowController {
         contentView.addSubview(tokenLabel)
 
         // Token field
-        tokenField = NSSecureTextField(frame: NSRect(
-            x: padding,
-            y: 210,
-            width: contentView.bounds.width - (padding * 2),
-            height: fieldHeight
-        ))
+        tokenField = NSSecureTextField(
+            frame: NSRect(
+                x: padding,
+                y: 210,
+                width: contentView.bounds.width - (padding * 2),
+                height: fieldHeight
+            ))
         tokenField.placeholderString = "Enter your CircleCI personal API token"
         contentView.addSubview(tokenField)
 
         // Token help text
-        let tokenHelpLabel = NSTextField(wrappingLabelWithString: "Get your token from CircleCI → User Settings → Personal API Tokens")
+        let tokenHelpLabel = NSTextField(
+            wrappingLabelWithString: "Get your token from CircleCI → User Settings → Personal API Tokens")
         tokenHelpLabel.frame = NSRect(x: padding, y: 185, width: contentView.bounds.width - (padding * 2), height: 20)
         tokenHelpLabel.font = NSFont.systemFont(ofSize: 11)
         tokenHelpLabel.textColor = .secondaryLabelColor
@@ -66,12 +68,13 @@ class SettingsWindowController: NSWindowController {
         contentView.addSubview(orgLabel)
 
         // Org field
-        orgField = NSTextField(frame: NSRect(
-            x: padding,
-            y: 125,
-            width: contentView.bounds.width - (padding * 2),
-            height: fieldHeight
-        ))
+        orgField = NSTextField(
+            frame: NSRect(
+                x: padding,
+                y: 125,
+                width: contentView.bounds.width - (padding * 2),
+                height: fieldHeight
+            ))
         orgField.placeholderString = "e.g., gh/my-org (leave empty for all orgs)"
         contentView.addSubview(orgField)
 
@@ -87,12 +90,13 @@ class SettingsWindowController: NSWindowController {
         contentView.addSubview(pollValueLabel)
 
         // Poll interval slider (logarithmic scale: 1s to 1h)
-        pollSlider = NSSlider(frame: NSRect(
-            x: padding,
-            y: 65,
-            width: contentView.bounds.width - (padding * 2),
-            height: 21
-        ))
+        pollSlider = NSSlider(
+            frame: NSRect(
+                x: padding,
+                y: 65,
+                width: contentView.bounds.width - (padding * 2),
+                height: 21
+            ))
         pollSlider.minValue = 0
         pollSlider.maxValue = 100
         pollSlider.target = self
@@ -101,7 +105,8 @@ class SettingsWindowController: NSWindowController {
 
         // Status label
         statusLabel = NSTextField(labelWithString: "")
-        statusLabel.frame = NSRect(x: padding, y: 35, width: contentView.bounds.width - (padding * 2), height: fieldHeight)
+        statusLabel.frame = NSRect(
+            x: padding, y: 35, width: contentView.bounds.width - (padding * 2), height: fieldHeight)
         statusLabel.font = NSFont.systemFont(ofSize: 12)
         contentView.addSubview(statusLabel)
 
