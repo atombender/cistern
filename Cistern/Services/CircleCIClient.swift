@@ -92,7 +92,8 @@ class CircleCIClient {
                 status: info.status,
                 webURL: pipeline.webURL,
                 completedDuration: info.completedDuration,
-                startedAt: info.startedAt
+                startedAt: info.startedAt,
+                stoppedAt: info.stoppedAt
             )
             builds.append(build)
         }
@@ -168,29 +169,32 @@ class CircleCIClient {
         let completedDuration: TimeInterval?
         /// For running builds, the start time. For completed builds, this is nil.
         let startedAt: Date?
+        /// For completed builds, the time it finished.
+        let stoppedAt: Date?
     }
 
     private func fetchPipelineInfo(pipelineId: String) async throws -> PipelineInfo {
         let workflows = try await fetchWorkflows(pipelineId: pipelineId)
 
         guard !workflows.isEmpty else {
-            return PipelineInfo(status: .unknown, workflowName: "", completedDuration: nil, startedAt: nil)
+            return PipelineInfo(
+                status: .unknown, workflowName: "", completedDuration: nil, startedAt: nil, stoppedAt: nil)
         }
 
         // Get the most recent workflow (latest createdAt)
         let latestWorkflow = workflows.max(by: { $0.createdAt < $1.createdAt })!
         let status = BuildStatus.from(workflowStatus: latestWorkflow.status)
 
-        if latestWorkflow.stoppedAt != nil {
+        if let stoppedAt = latestWorkflow.stoppedAt {
             // Completed build - return final duration
             return PipelineInfo(
                 status: status, workflowName: latestWorkflow.name, completedDuration: latestWorkflow.duration,
-                startedAt: nil)
+                startedAt: nil, stoppedAt: stoppedAt)
         } else {
             // Running build - return start time for live updates
             return PipelineInfo(
                 status: status, workflowName: latestWorkflow.name, completedDuration: nil,
-                startedAt: latestWorkflow.createdAt)
+                startedAt: latestWorkflow.createdAt, stoppedAt: nil)
         }
     }
 

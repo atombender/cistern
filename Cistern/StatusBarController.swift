@@ -224,12 +224,23 @@ class StatusBarController {
         let hasRunningBuilds = builds.contains { $0.status == .running }
         let overallStatus = builds.map { $0.status }.worstStatus()
 
+        // Check if all builds are stale (> 30 mins since last completed)
+        let staleThreshold: TimeInterval = 30 * 60
+        let mostRecentStop = builds.compactMap { $0.stoppedAt }.max()
+        let isStale = !hasRunningBuilds && (mostRecentStop == nil ||
+            Date().timeIntervalSince(mostRecentStop!) > staleThreshold)
+
         // Start or stop animation based on running builds
         if hasRunningBuilds {
             startAnimation()
         } else {
             stopAnimation()
-            button.image = createStatusImage(symbolName: overallStatus.symbolName, color: overallStatus.color)
+            if isStale {
+                // Show neutral icon in system color
+                button.image = createStatusImage(symbolName: "circle.dotted", color: nil)
+            } else {
+                button.image = createStatusImage(symbolName: overallStatus.symbolName, color: overallStatus.color)
+            }
         }
     }
 

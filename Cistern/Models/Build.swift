@@ -12,6 +12,8 @@ struct Build {
     let completedDuration: TimeInterval?
     /// For running builds, the start time. For completed builds, this is nil.
     let startedAt: Date?
+    /// For completed builds, the time it finished.
+    let stoppedAt: Date?
 
     var duration: TimeInterval {
         if let completed = completedDuration {

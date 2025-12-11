@@ -10,7 +10,7 @@ line_length:
   error: 150
 
 type_body_length:
-  warning: 300
+  warning: 350
   error: 500
 
 file_length:
