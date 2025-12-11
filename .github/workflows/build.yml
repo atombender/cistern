@@ -19,6 +19,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install tools
+        run: brew install swiftlint swift-format
+
+      - name: Lint
+        run: make lint
+
+      - name: Check formatting
+        run: make format-check
+
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
