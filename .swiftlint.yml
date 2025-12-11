@@ -18,8 +18,8 @@ file_length:
   error: 1000
 
 function_body_length:
-  warning: 50
-  error: 100
+  warning: 80
+  error: 120
 
 disabled_rules:
   - trailing_whitespace
@@ -29,5 +29,3 @@ disabled_rules:
 opt_in_rules:
   - empty_count
   - closure_spacing
-  - force_unwrapping
-  - implicitly_unwrapped_optional
