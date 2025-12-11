@@ -69,7 +69,7 @@ class StatusBarController {
 
         if let color = color {
             // Create colored version by drawing with tint
-            let image = configuredImage.copy() as! NSImage
+            guard let image = configuredImage.copy() as? NSImage else { return nil }
             image.lockFocus()
             color.set()
             let imageRect = NSRect(origin: .zero, size: image.size)
@@ -79,7 +79,7 @@ class StatusBarController {
             return image
         } else {
             // Template mode for automatic dark/light adaptation
-            let image = configuredImage.copy() as! NSImage
+            guard let image = configuredImage.copy() as? NSImage else { return nil }
             image.isTemplate = true
             return image
         }
