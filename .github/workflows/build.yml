@@ -1,0 +1,35 @@
+name: Build and Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build
+        run: |
+          xcodebuild -project Cistern.xcodeproj \
+            -scheme Cistern \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            clean build
+
+      - name: Build Release
+        run: |
+          xcodebuild -project Cistern.xcodeproj \
+            -scheme Cistern \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            build
