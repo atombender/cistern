@@ -87,7 +87,7 @@ class StatusBarController {
 
     private func createRotatedCImage(angle: CGFloat, color: NSColor?) -> NSImage {
         let size = NSSize(width: 18, height: 18)
-        let image = NSImage(size: size, flipped: false) { rect in
+        let image = NSImage(size: size, flipped: false) { _ in
             let context = NSGraphicsContext.current!.cgContext
 
             // Move to center, rotate, move back
