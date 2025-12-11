@@ -2,6 +2,10 @@ name: Build and Test
 
 on:
   push:
+    tags:
+      - 'release-*'
+    branches:
+      - '**'
   pull_request:
 
 jobs:
@@ -18,18 +22,27 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
-      - name: Build
-        run: |
-          xcodebuild -project Cistern.xcodeproj \
-            -scheme Cistern \
-            -configuration Debug \
-            -destination 'platform=macOS' \
-            clean build
+      - name: Build Debug
+        run: make debug
 
       - name: Build Release
-        run: |
-          xcodebuild -project Cistern.xcodeproj \
-            -scheme Cistern \
-            -configuration Release \
-            -destination 'platform=macOS' \
-            build
+        run: make release
+
+      - name: Create zip
+        if: startsWith(github.ref, 'refs/tags/release-')
+        run: make zip
+
+      - name: Extract version from tag
+        if: startsWith(github.ref, 'refs/tags/release-')
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/release-}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/release-')
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Cistern ${{ steps.version.outputs.VERSION }}
+          files: Cistern.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
