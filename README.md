@@ -1,6 +1,6 @@
 # Cistern
 
-A beautifully crafted macOS menu bar app for monitoring your CircleCI builds.
+A macOS menu bar app for monitoring your CircleCI builds.
 
 ![Cistern Screenshot](./assets/screenshot.png)
 
@@ -46,27 +46,6 @@ A beautifully crafted macOS menu bar app for monitoring your CircleCI builds.
 
 - macOS 13.0 or later
 - Xcode 15.0 or later (for building)
-
-## Architecture
-
-Cistern is built with a clean, simple architecture:
-
-```
-Cistern/
-├── AppDelegate.swift           # App lifecycle
-├── StatusBarController.swift   # Menu bar UI and animations
-├── Models/                     # Data models
-│   ├── Build.swift
-│   ├── Pipeline.swift
-│   ├── Workflow.swift
-│   └── Organization.swift
-├── Services/                   # Business logic
-│   ├── CircleCIClient.swift    # API client
-│   ├── KeychainService.swift   # Secure storage
-│   └── Settings.swift          # User preferences
-└── Views/
-    └── SettingsWindowController.swift
-```
 
 ## Why "Cistern"?
 
