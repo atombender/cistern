@@ -8,10 +8,19 @@ class StatusBarController {
     private var loadingTimer: Timer?
     private var lastUpdatedTimer: Timer?
     private var builds: [Build] = []
+    private var displayedBuilds: [Build] {
+        // Always show all running builds first, then limit non-running builds
+        let runningBuilds = builds.filter { $0.status == .running }
+        let otherBuilds = builds.filter { $0.status != .running }
+        let maxOtherBuilds = max(0, 10 - runningBuilds.count)
+        return runningBuilds + otherBuilds.prefix(maxOtherBuilds)
+    }
     private var animationFrame: Int = 0
     private var isLoading: Bool = false
+    private var loadingCount: Int = 0
     private var lastUpdated: Date?
     private var lastUpdatedMenuItem: NSMenuItem?
+    private var loadingMenuItem: NSMenuItem?
 
     init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -118,17 +127,19 @@ class StatusBarController {
 
     private func buildMenu() {
         let menu = NSMenu()
+        loadingMenuItem = nil
 
         if !KeychainService.hasToken() {
             let noTokenItem = NSMenuItem(title: "No API token configured", action: nil, keyEquivalent: "")
             noTokenItem.isEnabled = false
             menu.addItem(noTokenItem)
         } else if builds.isEmpty {
-            let loadingItem = NSMenuItem(title: "Loading...", action: nil, keyEquivalent: "")
-            loadingItem.isEnabled = false
-            menu.addItem(loadingItem)
+            let loadingText = loadingCount > 0 ? "Loading... (\(loadingCount))" : "Loading..."
+            loadingMenuItem = NSMenuItem(title: loadingText, action: nil, keyEquivalent: "")
+            loadingMenuItem?.isEnabled = false
+            menu.addItem(loadingMenuItem!)
         } else {
-            for build in builds.prefix(10) {
+            for build in displayedBuilds {
                 let item = createMenuItem(for: build)
                 menu.addItem(item)
             }
@@ -221,12 +232,13 @@ class StatusBarController {
     private func updateStatusIcon() {
         guard let button = statusItem.button else { return }
 
-        let hasRunningBuilds = builds.contains { $0.status == .running }
-        let overallStatus = builds.map { $0.status }.worstStatus()
+        let visibleBuilds = displayedBuilds
+        let hasRunningBuilds = visibleBuilds.contains { $0.status == .running }
+        let overallStatus = visibleBuilds.map { $0.status }.worstStatus()
 
         // Check if all builds are stale (> 30 mins since last completed)
         let staleThreshold: TimeInterval = 30 * 60
-        let mostRecentStop = builds.compactMap { $0.stoppedAt }.max()
+        let mostRecentStop = visibleBuilds.compactMap { $0.stoppedAt }.max()
         let isStale = !hasRunningBuilds && (mostRecentStop == nil ||
             Date().timeIntervalSince(mostRecentStop!) > staleThreshold)
 
@@ -346,15 +358,22 @@ class StatusBarController {
         // Show loading animation only on manual refresh or initial load
         if showLoading {
             isLoading = true
+            loadingCount = 0
             stopAnimation()  // Stop running builds animation if active
             startLoadingAnimation()
         }
 
         Task {
             do {
-                let fetchedBuilds = try await circleCIClient.fetchLatestBuilds()
+                let fetchedBuilds = try await circleCIClient.fetchLatestBuilds { count in
+                    Task { @MainActor in
+                        self.loadingCount = count
+                        self.loadingMenuItem?.title = "Loading... (\(count))"
+                    }
+                }
                 await MainActor.run {
                     self.isLoading = false
+                    self.loadingCount = 0
                     self.stopLoadingAnimation()
                     self.builds = fetchedBuilds
                     self.lastUpdated = Date()
@@ -365,6 +384,7 @@ class StatusBarController {
                 await MainActor.run {
                     print("Error fetching builds: \(error)")
                     self.isLoading = false
+                    self.loadingCount = 0
                     self.stopLoadingAnimation()
                     self.builds = []
                     self.buildMenu()

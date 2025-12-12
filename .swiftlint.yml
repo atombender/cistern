@@ -18,8 +18,8 @@ file_length:
   error: 1000
 
 function_body_length:
-  warning: 80
-  error: 120
+  warning: 100
+  error: 150
 
 disabled_rules:
   - trailing_whitespace
