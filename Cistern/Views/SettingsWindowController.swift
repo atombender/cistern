@@ -204,15 +204,16 @@ class SettingsWindowController: NSWindowController {
         testButton.isEnabled = false
 
         let client = CircleCIClient()
-        Task {
+        Task { [weak self] in
             do {
                 let success = try await client.testConnection()
-                await MainActor.run {
+                await MainActor.run { [weak self] in
+                    guard let self = self else { return }
                     if success {
-                        showStatus("Connection successful!", isError: false)
-                        statusLabel.textColor = .systemGreen
+                        self.showStatus("Connection successful!", isError: false)
+                        self.statusLabel.textColor = .systemGreen
                     } else {
-                        showStatus("Connection failed", isError: true)
+                        self.showStatus("Connection failed", isError: true)
                         // Restore previous token if test failed
                         if let prev = previousToken {
                             _ = KeychainService.setToken(prev)
@@ -220,18 +221,19 @@ class SettingsWindowController: NSWindowController {
                             KeychainService.deleteToken()
                         }
                     }
-                    testButton.isEnabled = true
+                    self.testButton.isEnabled = true
                 }
             } catch {
-                await MainActor.run {
-                    showStatus("Error: \(error.localizedDescription)", isError: true)
+                await MainActor.run { [weak self] in
+                    guard let self = self else { return }
+                    self.showStatus("Error: \(error.localizedDescription)", isError: true)
                     // Restore previous token on error
                     if let prev = previousToken {
                         _ = KeychainService.setToken(prev)
                     } else {
                         KeychainService.deleteToken()
                     }
-                    testButton.isEnabled = true
+                    self.testButton.isEnabled = true
                 }
             }
         }

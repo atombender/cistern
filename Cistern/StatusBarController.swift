@@ -16,17 +16,26 @@ class StatusBarController {
         return runningBuilds + otherBuilds.prefix(maxOtherBuilds)
     }
     private var animationFrame: Int = 0
-    private var isLoading: Bool = false
+    private var isLoading: Bool = true  // Start as loading until first fetch completes
     private var loadingCount: Int = 0
     private var lastUpdated: Date?
     private var lastUpdatedMenuItem: NSMenuItem?
     private var loadingMenuItem: NSMenuItem?
+
+    // Cached animation frames to avoid recreating images every frame
+    private var cachedRunningFrames: [NSImage] = []
+    private var cachedLoadingFrames: [NSImage] = []
+    private let totalFrames = 36  // One full rotation
+
+    // Cached status images to avoid recreating on every menu build
+    private var cachedStatusImages: [String: NSImage] = [:]
 
     init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         circleCIClient = CircleCIClient()
 
         setupStatusItem()
+        cacheAnimationFrames()
         buildMenu()
         startPolling()
         startLastUpdatedTimer()
@@ -43,6 +52,19 @@ class StatusBarController {
             name: .tokenDidChange,
             object: nil
         )
+
+    }
+
+    private func cacheAnimationFrames() {
+        // Pre-generate all animation frames to avoid creating images every frame
+        cachedRunningFrames = (0..<totalFrames).map { frame in
+            let angle = CGFloat(frame) * (.pi * 2 / CGFloat(totalFrames))
+            return createRotatedCImage(angle: angle, color: .systemOrange)
+        }
+        cachedLoadingFrames = (0..<totalFrames).map { frame in
+            let angle = CGFloat(frame) * (.pi * 2 / CGFloat(totalFrames))
+            return createRotatedCImage(angle: angle, color: nil)
+        }
     }
 
     private func startLastUpdatedTimer() {
@@ -67,6 +89,15 @@ class StatusBarController {
     }
 
     private func createStatusImage(symbolName: String, color: NSColor?) -> NSImage? {
+        // Create cache key from symbol name and color
+        let colorKey = color?.description ?? "template"
+        let cacheKey = "\(symbolName)-\(colorKey)"
+
+        // Return cached image if available
+        if let cached = cachedStatusImages[cacheKey] {
+            return cached
+        }
+
         guard let baseImage = NSImage(systemSymbolName: symbolName, accessibilityDescription: "CircleCI Status") else {
             return nil
         }
@@ -76,22 +107,29 @@ class StatusBarController {
             return nil
         }
 
+        let image: NSImage?
         if let color = color {
             // Create colored version by drawing with tint
-            guard let image = configuredImage.copy() as? NSImage else { return nil }
-            image.lockFocus()
+            guard let img = configuredImage.copy() as? NSImage else { return nil }
+            img.lockFocus()
             color.set()
-            let imageRect = NSRect(origin: .zero, size: image.size)
+            let imageRect = NSRect(origin: .zero, size: img.size)
             imageRect.fill(using: .sourceAtop)
-            image.unlockFocus()
-            image.isTemplate = false
-            return image
+            img.unlockFocus()
+            img.isTemplate = false
+            image = img
         } else {
             // Template mode for automatic dark/light adaptation
-            guard let image = configuredImage.copy() as? NSImage else { return nil }
-            image.isTemplate = true
-            return image
+            guard let img = configuredImage.copy() as? NSImage else { return nil }
+            img.isTemplate = true
+            image = img
         }
+
+        // Cache and return
+        if let image = image {
+            cachedStatusImages[cacheKey] = image
+        }
+        return image
     }
 
     private func createRotatedCImage(angle: CGFloat, color: NSColor?) -> NSImage {
@@ -133,11 +171,15 @@ class StatusBarController {
             let noTokenItem = NSMenuItem(title: "No API token configured", action: nil, keyEquivalent: "")
             noTokenItem.isEnabled = false
             menu.addItem(noTokenItem)
-        } else if builds.isEmpty {
+        } else if builds.isEmpty && isLoading {
             let loadingText = loadingCount > 0 ? "Loading... (\(loadingCount))" : "Loading..."
             loadingMenuItem = NSMenuItem(title: loadingText, action: nil, keyEquivalent: "")
             loadingMenuItem?.isEnabled = false
             menu.addItem(loadingMenuItem!)
+        } else if builds.isEmpty {
+            let noBuildsItem = NSMenuItem(title: "No recent builds found", action: nil, keyEquivalent: "")
+            noBuildsItem.isEnabled = false
+            menu.addItem(noBuildsItem)
         } else {
             for build in displayedBuilds {
                 let item = createMenuItem(for: build)
@@ -194,8 +236,8 @@ class StatusBarController {
 
         // Set icon
         if build.status == .running {
-            // Will be animated
-            item.image = createRotatedCImage(angle: 0, color: .systemOrange)
+            // Use cached frame (will be animated)
+            item.image = cachedRunningFrames.first
         } else {
             item.image = createStatusImage(symbolName: build.status.symbolName, color: build.status.color)
         }
@@ -290,9 +332,9 @@ class StatusBarController {
     private func animateLoadingIcon() {
         guard let button = statusItem.button else { return }
 
-        // Rotating "C" in system color (template mode)
-        let angle = CGFloat(animationFrame % 36) * (.pi * 2 / 36)
-        button.image = createRotatedCImage(angle: angle, color: nil)
+        // Use cached frame instead of creating new image
+        let frameIndex = animationFrame % totalFrames
+        button.image = cachedLoadingFrames[frameIndex]
 
         animationFrame += 1
     }
@@ -300,9 +342,9 @@ class StatusBarController {
     private func animateIcon() {
         guard let button = statusItem.button else { return }
 
-        // Slowly rotating "C" - 36 frames for full rotation (every 10°)
-        let angle = CGFloat(animationFrame % 36) * (.pi * 2 / 36)
-        let animatedImage = createRotatedCImage(angle: angle, color: .systemOrange)
+        // Use cached frame instead of creating new image
+        let frameIndex = animationFrame % totalFrames
+        let animatedImage = cachedRunningFrames[frameIndex]
 
         // Update status bar icon
         button.image = animatedImage
@@ -363,15 +405,17 @@ class StatusBarController {
             startLoadingAnimation()
         }
 
-        Task {
+        Task { [weak self] in
+            guard let self = self else { return }
             do {
-                let fetchedBuilds = try await circleCIClient.fetchLatestBuilds { count in
-                    Task { @MainActor in
-                        self.loadingCount = count
-                        self.loadingMenuItem?.title = "Loading... (\(count))"
+                let fetchedBuilds = try await self.circleCIClient.fetchLatestBuilds { [weak self] count in
+                    Task { @MainActor [weak self] in
+                        self?.loadingCount = count
+                        self?.loadingMenuItem?.title = "Loading... (\(count))"
                     }
                 }
-                await MainActor.run {
+                await MainActor.run { [weak self] in
+                    guard let self = self else { return }
                     self.isLoading = false
                     self.loadingCount = 0
                     self.stopLoadingAnimation()
@@ -381,8 +425,8 @@ class StatusBarController {
                     self.updateStatusIcon()
                 }
             } catch {
-                await MainActor.run {
-                    print("Error fetching builds: \(error)")
+                await MainActor.run { [weak self] in
+                    guard let self = self else { return }
                     self.isLoading = false
                     self.loadingCount = 0
                     self.stopLoadingAnimation()

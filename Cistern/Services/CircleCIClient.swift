@@ -3,35 +3,42 @@ import Foundation
 class CircleCIClient {
     private let baseURL = "https://circleci.com/api/v2"
     private let session: URLSession
-
-    private var decoder: JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .custom { decoder in
-            let container = try decoder.singleValueContainer()
-            let dateString = try container.decode(String.self)
-
-            // Try ISO8601 with fractional seconds first
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let date = formatter.date(from: dateString) {
-                return date
-            }
-
-            // Fall back to without fractional seconds
-            formatter.formatOptions = [.withInternetDateTime]
-            if let date = formatter.date(from: dateString) {
-                return date
-            }
-
-            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Cannot decode date: \(dateString)")
-        }
-        return decoder
-    }
+    private let decoder: JSONDecoder
 
     init() {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
+        config.urlCache = nil  // Disable URL caching to prevent memory accumulation
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
         self.session = URLSession(configuration: config)
+
+        // Create decoder once and reuse - avoid recreating on every API call
+        let jsonDecoder = JSONDecoder()
+        let formatterWithFractional = ISO8601DateFormatter()
+        formatterWithFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let formatterWithoutFractional = ISO8601DateFormatter()
+        formatterWithoutFractional.formatOptions = [.withInternetDateTime]
+
+        jsonDecoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let dateString = try container.decode(String.self)
+
+            // Try ISO8601 with fractional seconds first
+            if let date = formatterWithFractional.date(from: dateString) {
+                return date
+            }
+
+            // Fall back to without fractional seconds
+            if let date = formatterWithoutFractional.date(from: dateString) {
+                return date
+            }
+
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Cannot decode date: \(dateString)"
+            )
+        }
+        self.decoder = jsonDecoder
     }
 
     private func makeRequest(endpoint: String) throws -> URLRequest {
@@ -50,16 +57,11 @@ class CircleCIClient {
     }
 
     private func performRequest(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let start = Date()
         let (data, response) = try await session.data(for: request)
-        let latency = Int(Date().timeIntervalSince(start) * 1000)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw CircleCIError.invalidResponse
         }
-
-        let url = request.url?.absoluteString ?? "unknown"
-        print("API: \(httpResponse.statusCode) \(url) (\(latency)ms)")
 
         return (data, httpResponse)
     }
@@ -76,16 +78,23 @@ class CircleCIClient {
             orgSlugs = orgs.map { $0.slug }
         }
 
-        // 2. Fetch pipelines for each organization (up to 7 days old for pagination)
-        let maxPipelineAge: TimeInterval = 7 * 24 * 60 * 60
+        // 2. Fetch pipelines up to 14 days old to catch workflow reruns on older pipelines
+        let maxPipelineAge: TimeInterval = 14 * 24 * 60 * 60  // 14 days
+        let maxWorkflowAge: TimeInterval = 24 * 60 * 60  // 24 hours for workflow display
+        let workflowCutoffDate = Date().addingTimeInterval(-maxWorkflowAge)
+        let maxBuilds = 10
+
         var allPipelines: [Pipeline] = []
         for orgSlug in orgSlugs {
             do {
-                let pipelines = try await fetchPipelines(orgSlug: orgSlug, maxAge: maxPipelineAge)
+                let pipelines = try await fetchPipelines(
+                    orgSlug: orgSlug,
+                    minAge: 0,
+                    maxAge: maxPipelineAge
+                )
                 allPipelines.append(contentsOf: pipelines)
             } catch {
-                // Continue with other orgs if one fails
-                print("Failed to fetch pipelines for \(orgSlug): \(error)")
+                // Silently continue - pipelines from other orgs may still work
             }
         }
 
@@ -99,15 +108,9 @@ class CircleCIClient {
         })
             .compactMapValues { $0.sorted(by: { $0.createdAt > $1.createdAt }).first }
             .values
-            .sorted(by: { $0.createdAt > $1.createdAt })  // Most recent first
+            .sorted(by: { $0.createdAt > $1.createdAt })
 
-        // 4. Fetch workflows only for pipelines we need to display
-        // We need all running builds + up to 10 non-running builds
-        // Track seen [project, branch, workflow] to avoid duplicates
-        let maxWorkflowAge: TimeInterval = 24 * 60 * 60
-        let cutoffDate = Date().addingTimeInterval(-maxWorkflowAge)
-        let maxBuilds = 10
-
+        // 4. Fetch workflows for each pipeline and filter by recency
         struct BuildKey: Hashable {
             let projectSlug: String
             let branch: String
@@ -120,8 +123,8 @@ class CircleCIClient {
         var fetchedCount = 0
 
         for pipeline in latestPipelines {
-            // Stop if we have enough non-running builds (but always check for running ones)
-            if otherBuilds.count >= maxBuilds && pipeline.createdAt < cutoffDate {
+            // Stop if we have enough non-running builds and pipeline is old
+            if otherBuilds.count >= maxBuilds && pipeline.createdAt < workflowCutoffDate {
                 break
             }
 
@@ -130,13 +133,15 @@ class CircleCIClient {
                 fetchedCount += 1
                 onProgress?(fetchedCount)
 
-                for workflow in workflows where workflow.createdAt > cutoffDate {
-                    let key = BuildKey(
-                        projectSlug: pipeline.projectSlug, branch: pipeline.branch, workflowName: workflow.name)
+                for workflow in workflows where workflow.createdAt > workflowCutoffDate {
+                    let buildKey = BuildKey(
+                        projectSlug: pipeline.projectSlug,
+                        branch: pipeline.branch,
+                        workflowName: workflow.name
+                    )
 
-                    // Skip if we've already seen this [project, branch, workflow] combination
-                    guard !seenKeys.contains(key) else { continue }
-                    seenKeys.insert(key)
+                    guard !seenKeys.contains(buildKey) else { continue }
+                    seenKeys.insert(buildKey)
 
                     let build = createBuild(from: workflow, pipeline: pipeline)
                     if build.status == .running {
@@ -146,7 +151,7 @@ class CircleCIClient {
                     }
                 }
             } catch {
-                print("Failed to fetch workflows for pipeline \(pipeline.id): \(error)")
+                // Silently continue - other pipelines may still have workflows
             }
         }
 
@@ -205,9 +210,12 @@ class CircleCIClient {
         }
     }
 
-    private func fetchPipelines(orgSlug: String, maxAge: TimeInterval) async throws -> [Pipeline] {
+    private func fetchPipelines(
+        orgSlug: String, minAge: TimeInterval, maxAge: TimeInterval
+    ) async throws -> [Pipeline] {
         let encodedSlug = orgSlug.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? orgSlug
-        let cutoffDate = Date().addingTimeInterval(-maxAge)
+        let minCutoffDate = Date().addingTimeInterval(-minAge)  // Skip pipelines newer than this
+        let maxCutoffDate = Date().addingTimeInterval(-maxAge)  // Stop at pipelines older than this
         var allPipelines: [Pipeline] = []
         var pageToken: String?
 
@@ -227,11 +235,14 @@ class CircleCIClient {
 
                 // Filter and check if we've hit old pipelines
                 for pipeline in pipelinesResponse.items {
-                    if pipeline.createdAt < cutoffDate {
-                        // Reached pipelines older than threshold, stop paginating
+                    if pipeline.createdAt < maxCutoffDate {
+                        // Reached pipelines older than max threshold, stop paginating
                         return allPipelines
                     }
-                    allPipelines.append(pipeline)
+                    // Only include pipelines within the [minAge, maxAge] range
+                    if pipeline.createdAt <= minCutoffDate {
+                        allPipelines.append(pipeline)
+                    }
                 }
 
                 pageToken = pipelinesResponse.nextPageToken
