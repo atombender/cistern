@@ -47,7 +47,8 @@ class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             content.title = "Build Finished"
         }
 
-        content.body = "\(build.projectName) \u{2022} \(build.branch) \u{2022} \(build.workflowName) (\(build.durationString))"
+        content.body =
+            "\(build.projectName) \u{2022} \(build.branch) \u{2022} \(build.workflowName) (\(build.durationString))"
         content.sound = .default
         content.userInfo = ["url": build.webURL]
 
@@ -69,7 +70,8 @@ class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     ) {
         // Handle notification click - open the build URL
         if let urlString = response.notification.request.content.userInfo["url"] as? String,
-           let url = URL(string: urlString) {
+            let url = URL(string: urlString)
+        {
             NSWorkspace.shared.open(url)
         }
         completionHandler()

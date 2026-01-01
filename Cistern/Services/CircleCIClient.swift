@@ -103,12 +103,15 @@ class CircleCIClient {
             let projectSlug: String
             let branch: String
         }
-        let latestPipelines = Dictionary(grouping: allPipelines, by: {
-            PipelineKey(projectSlug: $0.projectSlug, branch: $0.branch)
-        })
-            .compactMapValues { $0.sorted(by: { $0.createdAt > $1.createdAt }).first }
-            .values
-            .sorted(by: { $0.createdAt > $1.createdAt })
+        let latestPipelines = Dictionary(
+            grouping: allPipelines,
+            by: {
+                PipelineKey(projectSlug: $0.projectSlug, branch: $0.branch)
+            }
+        )
+        .compactMapValues { $0.sorted(by: { $0.createdAt > $1.createdAt }).first }
+        .values
+        .sorted(by: { $0.createdAt > $1.createdAt })
 
         // 4. Fetch workflows for each pipeline and filter by recency
         struct BuildKey: Hashable {
@@ -156,11 +159,13 @@ class CircleCIClient {
         }
 
         // 5. Combine and sort: running builds first, then others by project/branch/workflow
-        let allBuilds = runningBuilds.sorted {
-            ($0.projectName, $0.branch, $0.workflowName) < ($1.projectName, $1.branch, $1.workflowName)
-        } + otherBuilds.sorted {
-            ($0.projectName, $0.branch, $0.workflowName) < ($1.projectName, $1.branch, $1.workflowName)
-        }
+        let allBuilds =
+            runningBuilds.sorted {
+                ($0.projectName, $0.branch, $0.workflowName) < ($1.projectName, $1.branch, $1.workflowName)
+            }
+            + otherBuilds.sorted {
+                ($0.projectName, $0.branch, $0.workflowName) < ($1.projectName, $1.branch, $1.workflowName)
+            }
 
         return allBuilds
     }

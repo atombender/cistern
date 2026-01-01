@@ -347,8 +347,8 @@ class StatusBarController {
         // Check if all builds are stale (> 30 mins since last completed)
         let staleThreshold: TimeInterval = 30 * 60
         let mostRecentStop = visibleBuilds.compactMap { $0.stoppedAt }.max()
-        let isStale = !hasRunningBuilds && (mostRecentStop == nil ||
-            Date().timeIntervalSince(mostRecentStop!) > staleThreshold)
+        let isStale =
+            !hasRunningBuilds && (mostRecentStop == nil || Date().timeIntervalSince(mostRecentStop!) > staleThreshold)
 
         // Start or stop animation based on running builds
         if hasRunningBuilds {
