@@ -35,7 +35,7 @@ format:
 	swift-format -i -r $(SOURCES)
 
 format-check:
-	swift-format lint -r $(SOURCES)
+	swift-format lint -rs $(SOURCES)
 
 clean:
 	rm -rf $(BUILD_DIR)
