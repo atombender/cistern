@@ -30,6 +30,9 @@ class StatusBarController {
     // Cached status images to avoid recreating on every menu build
     private var cachedStatusImages: [String: NSImage] = [:]
 
+    // Track previous build statuses for change detection
+    private var previousBuildStatuses: [String: BuildStatus] = [:]
+
     init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         circleCIClient = CircleCIClient()
@@ -39,6 +42,9 @@ class StatusBarController {
         buildMenu()
         startPolling()
         startLastUpdatedTimer()
+
+        // Request notification permissions
+        NotificationService.shared.requestAuthorization()
 
         NotificationCenter.default.addObserver(
             self,
@@ -358,6 +364,30 @@ class StatusBarController {
         }
     }
 
+    private func checkForBuildChangesAndNotify(_ newBuilds: [Build]) {
+        for build in newBuilds {
+            let key = "\(build.projectSlug)/\(build.branch)/\(build.workflowName)"
+            let oldStatus = previousBuildStatuses[key]
+
+            // Build started: now running, wasn't running before (or is new)
+            if build.status == .running && oldStatus != .running {
+                NotificationService.shared.sendBuildStarted(build: build)
+            }
+
+            // Build finished: was running, now completed
+            if let old = oldStatus, old == .running && build.status != .running {
+                NotificationService.shared.sendBuildFinished(build: build)
+            }
+        }
+
+        // Update tracked statuses
+        previousBuildStatuses = Dictionary(
+            uniqueKeysWithValues: newBuilds.map { build in
+                ("\(build.projectSlug)/\(build.branch)/\(build.workflowName)", build.status)
+            }
+        )
+    }
+
     private func startAnimation() {
         guard animationTimer == nil else { return }
 
@@ -479,6 +509,7 @@ class StatusBarController {
                     self.isLoading = false
                     self.loadingCount = 0
                     self.stopLoadingAnimation()
+                    self.checkForBuildChangesAndNotify(fetchedBuilds)
                     self.builds = fetchedBuilds
                     self.lastUpdated = Date()
                     self.buildMenu()

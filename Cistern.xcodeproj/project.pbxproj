@@ -19,6 +19,7 @@
 		A1000008230F0008 /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000008230F0007 /* SettingsWindowController.swift */; };
 		A1000009230F0009 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000A230F000A /* main.swift */; };
 		A1000060230F0060 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000061230F0061 /* Assets.xcassets */; };
+		A1000070230F0070 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000071230F0071 /* NotificationService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +37,7 @@
 		A1000009230F0008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A100000A230F000A /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		A1000061230F0061 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A1000071230F0071 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -107,6 +109,7 @@
 			children = (
 				A1000006230F0005 /* CircleCIClient.swift */,
 				A1000007230F0006 /* KeychainService.swift */,
+				A1000071230F0071 /* NotificationService.swift */,
 				A100000E230F000E /* Settings.swift */,
 			);
 			path = Services;
@@ -189,6 +192,7 @@
 				A1000007230F0007 /* KeychainService.swift in Sources */,
 				A100000D230F000D /* Settings.swift in Sources */,
 				A1000008230F0008 /* SettingsWindowController.swift in Sources */,
+				A1000070230F0070 /* NotificationService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
