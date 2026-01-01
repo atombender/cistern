@@ -53,6 +53,13 @@ class StatusBarController {
             object: nil
         )
 
+        // Regenerate cached frames when appearance changes (light/dark mode)
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(appearanceDidChange),
+            name: NSNotification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil
+        )
     }
 
     private func cacheAnimationFrames() {
@@ -62,8 +69,8 @@ class StatusBarController {
             return createRotatedCImage(angle: angle, color: .systemOrange)
         }
         cachedLoadingFrames = (0..<totalFrames).map { frame in
-            let angle = CGFloat(frame) * (.pi * 2 / CGFloat(totalFrames))
-            return createRotatedCImage(angle: angle, color: nil)
+            let phase = CGFloat(frame) / CGFloat(totalFrames)
+            return createDottedCircleWithPulsingDot(phase: phase)
         }
     }
 
@@ -79,6 +86,16 @@ class StatusBarController {
         pollingTimer?.invalidate()
         pollingTimer = nil
         startPolling()
+    }
+
+    @objc private func appearanceDidChange() {
+        // Regenerate frames with new appearance colors
+        cachedLoadingFrames = (0..<totalFrames).map { frame in
+            let phase = CGFloat(frame) / CGFloat(totalFrames)
+            return createDottedCircleWithPulsingDot(phase: phase)
+        }
+        cachedStatusImages.removeAll()
+        updateStatusIcon()
     }
 
     private func setupStatusItem() {
@@ -129,6 +146,49 @@ class StatusBarController {
         if let image = image {
             cachedStatusImages[cacheKey] = image
         }
+        return image
+    }
+
+    private func createDottedCircleWithPulsingDot(phase: CGFloat) -> NSImage {
+        // Get the same SF Symbol used for idle state
+        guard let baseImage = NSImage(systemSymbolName: "circle.dotted", accessibilityDescription: nil) else {
+            return NSImage()
+        }
+        let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+        guard let symbolImage = baseImage.withSymbolConfiguration(config) else {
+            return NSImage()
+        }
+
+        // Create a copy to draw on
+        guard let image = symbolImage.copy() as? NSImage else {
+            return NSImage()
+        }
+
+        image.lockFocus()
+
+        // Tint with labelColor for proper dark/light mode support
+        NSColor.labelColor.set()
+        let imageRect = NSRect(origin: .zero, size: image.size)
+        imageRect.fill(using: .sourceAtop)
+
+        // Draw pulsing green dot in center
+        // Use sine wave for smooth pulse (0.3 to 1.0 opacity range)
+        let pulseAlpha = 0.3 + 0.7 * (0.5 + 0.5 * sin(phase * .pi * 2))
+        let greenDotRadius: CGFloat = 2.0
+        // Use floor to avoid rounding up from .5 values
+        let centerX = floor(image.size.width / 2)
+        let centerY = floor(image.size.height / 2)
+        NSColor.systemGreen.withAlphaComponent(pulseAlpha).setFill()
+        let greenDotRect = CGRect(
+            x: centerX - greenDotRadius,
+            y: centerY - greenDotRadius,
+            width: greenDotRadius * 2,
+            height: greenDotRadius * 2
+        )
+        NSBezierPath(ovalIn: greenDotRect).fill()
+
+        image.unlockFocus()
+        image.isTemplate = false  // Not template since we have a colored dot
         return image
     }
 
