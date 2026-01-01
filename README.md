@@ -1,22 +1,8 @@
 # Cistern
 
-A macOS menu bar app for monitoring your CircleCI builds.
+A native macOS menu bar app for monitoring your CircleCI builds in real time.
 
 ![Cistern Screenshot](./assets/screenshot.png)
-
-## Features
-
-- **Lives in your menu bar** — Always visible, never in the way
-- **Real-time build status** — See your builds at a glance with color-coded status icons
-- **Animated running builds** — A spinning "C" indicator shows builds in progress with live-updating
-  duration
-- **Click to open** — Jump straight to any build in CircleCI
-- **Configurable refresh interval** — From 1 second to 1 hour, with a smooth logarithmic slider
-- **Filter by organization** — Focus on the builds that matter to you
-- **Shows only your builds** — No noise from other team members' pipelines
-- **Secure token storage** — API token stored safely in macOS Keychain
-- **Native macOS app** — Built with Swift and AppKit, lightweight and fast
-- **Dark mode support** — Looks great on both light and dark menu bars
 
 ## A note on how the app displays status
 
@@ -47,20 +33,10 @@ seeing a build in Cistern, it could be due to this issue.
 4. Click **Create New Token**
 5. Copy the token and paste it into Cistern's settings
 
-## Build Status Icons
-
-| Icon                | Status             |
-|---------------------|--------------------|
-| ✓ Green             | Success            |
-| Spinning C (orange) | Running            |
-| ✗ Red               | Failed             |
-| ⏸ Yellow            | On Hold            |
-| − Gray              | Canceled / Not Run |
-
 ## Requirements
 
-- macOS 13.0 or later
-- Xcode 15.0 or later (for building)
+* macOS 13.0 or later
+* Xcode 15.0 or later (for building)
 
 ## Why "Cistern"?
 
