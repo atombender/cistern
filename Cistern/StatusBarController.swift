@@ -27,18 +27,27 @@ class StatusBarController {
     private var cachedLoadingFrames: [NSImage] = []
     private let totalFrames = 36  // One full rotation
 
-    // Cached status images to avoid recreating on every menu build
-    private var cachedStatusImages: [String: NSImage] = [:]
+    // Cached status images - precomputed at startup for each BuildStatus
+    private var cachedStatusImages: [BuildStatus: NSImage] = [:]
+    private var loadingImage: NSImage?  // The circle.dotted template image
 
     // Track previous build statuses for change detection
     private var previousBuildStatuses: [String: BuildStatus] = [:]
+
+    // Cached attributed titles to avoid recreating NSAttributedString
+    private var cachedAttributedTitles: [String: NSAttributedString] = [:]
+
+    // Stable menu structure - only created once
+    private var buildMenuItems: [NSMenuItem] = []
+    private var separatorBeforeLastUpdated: NSMenuItem?
 
     init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         circleCIClient = CircleCIClient()
 
-        setupStatusItem()
+        cacheStatusImages()
         cacheAnimationFrames()
+        setupStatusItem()
         buildMenu()
         startPolling()
         startLastUpdatedTimer()
@@ -80,6 +89,20 @@ class StatusBarController {
         DistributedNotificationCenter.default().removeObserver(self)
     }
 
+    private func cacheStatusImages() {
+        // Pre-generate status images for all build statuses
+        for status in [
+            BuildStatus.success, .running, .failed, .error, .failing,
+            .onHold, .canceled, .notRun, .unknown,
+        ] {
+            if let image = createStatusImage(symbolName: status.symbolName, color: status.color) {
+                cachedStatusImages[status] = image
+            }
+        }
+        // Also cache the loading/unknown template image
+        loadingImage = createStatusImage(symbolName: "circle.dotted", color: nil)
+    }
+
     private func cacheAnimationFrames() {
         // Pre-generate all animation frames to avoid creating images every frame
         cachedRunningFrames = (0..<totalFrames).map { frame in
@@ -94,9 +117,30 @@ class StatusBarController {
 
     private func startLastUpdatedTimer() {
         lastUpdatedTimer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.lastUpdatedMenuItem?.title = self?.lastUpdatedString() ?? ""
+            guard let self = self else { return }
+            self.lastUpdatedMenuItem?.title = self.lastUpdatedString()
+            self.updateRunningBuildDurations()
         }
         RunLoop.main.add(lastUpdatedTimer!, forMode: .common)
+    }
+
+    private func updateRunningBuildDurations() {
+        guard let menu = statusItem.menu else { return }
+        for item in menu.items {
+            guard let build = item.representedObject as? Build, build.status == .running else {
+                continue
+            }
+            let maxBranchLength = 20
+            let branch: String
+            if build.branch.count > maxBranchLength {
+                branch = String(build.branch.prefix(maxBranchLength - 1)) + "…"
+            } else {
+                branch = build.branch
+            }
+            item.attributedTitle = formatMenuTitle(
+                projectName: build.projectName, branch: branch, workflowName: build.workflowName,
+                duration: build.durationString)
+        }
     }
 
     @objc private func settingsDidChange() {
@@ -107,42 +151,20 @@ class StatusBarController {
     }
 
     @objc private func appearanceDidChange() {
-        // Regenerate frames with new appearance colors
-        cachedLoadingFrames = (0..<totalFrames).map { frame in
-            let phase = CGFloat(frame) / CGFloat(totalFrames)
-            return createDottedCircleWithPulsingDot(phase: phase)
-        }
-        cachedStatusImages.removeAll()
+        // Regenerate all cached images with new appearance colors
+        cacheStatusImages()
+        cacheAnimationFrames()
         updateStatusIcon()
     }
 
     private func setupStatusItem() {
         if let button = statusItem.button {
-            button.image = createStatusImage(symbolName: "circle.dotted", color: nil)
+            button.image = loadingImage
         }
         statusItem.isVisible = true
     }
 
     private func createStatusImage(symbolName: String, color: NSColor?) -> NSImage? {
-        // Create cache key from symbol name and stable color identifier
-        // Note: NSColor.description is unstable and can vary based on color space/calibration,
-        // causing unbounded cache growth. Use RGBA components instead for a stable key.
-        let colorKey: String
-        if let color = color {
-            let rgb = color.usingColorSpace(.sRGB) ?? color
-            colorKey = String(
-                format: "%.3f,%.3f,%.3f,%.3f",
-                rgb.redComponent, rgb.greenComponent, rgb.blueComponent, rgb.alphaComponent)
-        } else {
-            colorKey = "template"
-        }
-        let cacheKey = "\(symbolName)-\(colorKey)"
-
-        // Return cached image if available
-        if let cached = cachedStatusImages[cacheKey] {
-            return cached
-        }
-
         guard let baseImage = NSImage(systemSymbolName: symbolName, accessibilityDescription: "CircleCI Status") else {
             return nil
         }
@@ -152,7 +174,6 @@ class StatusBarController {
             return nil
         }
 
-        let image: NSImage?
         if let color = color {
             // Create colored version by drawing with tint
             guard let img = configuredImage.copy() as? NSImage else { return nil }
@@ -162,19 +183,13 @@ class StatusBarController {
             imageRect.fill(using: .sourceAtop)
             img.unlockFocus()
             img.isTemplate = false
-            image = img
+            return img
         } else {
             // Template mode for automatic dark/light adaptation
             guard let img = configuredImage.copy() as? NSImage else { return nil }
             img.isTemplate = true
-            image = img
+            return img
         }
-
-        // Cache and return
-        if let image = image {
-            cachedStatusImages[cacheKey] = image
-        }
-        return image
     }
 
     private func createDottedCircleWithPulsingDot(phase: CGFloat) -> NSImage {
@@ -252,30 +267,78 @@ class StatusBarController {
     }
 
     private func buildMenu() {
-        let menu = NSMenu()
-        loadingMenuItem = nil
+        // Create menu structure only once
+        if statusItem.menu == nil {
+            createMenuStructure()
+        }
+
+        guard let menu = statusItem.menu else { return }
+
+        // Update build items
+        let visibleBuilds = displayedBuilds
+
+        // Hide all existing build menu items first
+        for item in buildMenuItems {
+            item.isHidden = true
+        }
 
         if !KeychainService.hasToken() {
-            let noTokenItem = NSMenuItem(title: "No API token configured", action: nil, keyEquivalent: "")
-            noTokenItem.isEnabled = false
-            menu.addItem(noTokenItem)
+            // Show "no token" message in first build slot
+            ensureBuildMenuItemExists(at: 0, in: menu)
+            let item = buildMenuItems[0]
+            item.title = "No API token configured"
+            item.attributedTitle = nil
+            item.image = nil
+            item.isEnabled = false
+            item.action = nil
+            item.representedObject = nil
+            item.isHidden = false
+            loadingMenuItem = nil
         } else if builds.isEmpty && isLoading {
+            // Show loading message
+            ensureBuildMenuItemExists(at: 0, in: menu)
+            let item = buildMenuItems[0]
             let loadingText = loadingCount > 0 ? "Loading... (\(loadingCount))" : "Loading..."
-            loadingMenuItem = NSMenuItem(title: loadingText, action: nil, keyEquivalent: "")
-            loadingMenuItem?.isEnabled = false
-            menu.addItem(loadingMenuItem!)
+            item.title = loadingText
+            item.attributedTitle = nil
+            item.image = nil
+            item.isEnabled = false
+            item.action = nil
+            item.representedObject = nil
+            item.isHidden = false
+            loadingMenuItem = item
         } else if builds.isEmpty {
-            let noBuildsItem = NSMenuItem(title: "No recent builds found", action: nil, keyEquivalent: "")
-            noBuildsItem.isEnabled = false
-            menu.addItem(noBuildsItem)
+            // Show "no builds" message
+            ensureBuildMenuItemExists(at: 0, in: menu)
+            let item = buildMenuItems[0]
+            item.title = "No recent builds found"
+            item.attributedTitle = nil
+            item.image = nil
+            item.isEnabled = false
+            item.action = nil
+            item.representedObject = nil
+            item.isHidden = false
+            loadingMenuItem = nil
         } else {
-            for build in displayedBuilds {
-                let item = createMenuItem(for: build)
-                menu.addItem(item)
+            // Show builds
+            loadingMenuItem = nil
+            for (index, build) in visibleBuilds.enumerated() {
+                ensureBuildMenuItemExists(at: index, in: menu)
+                updateMenuItem(buildMenuItems[index], with: build)
+                buildMenuItems[index].isHidden = false
             }
         }
 
-        menu.addItem(NSMenuItem.separator())
+        // Update separator visibility
+        separatorBeforeLastUpdated?.isHidden = visibleBuilds.isEmpty && !isLoading && KeychainService.hasToken()
+    }
+
+    private func createMenuStructure() {
+        let menu = NSMenu()
+
+        // Separator before "last updated" (will be positioned after build items)
+        separatorBeforeLastUpdated = NSMenuItem.separator()
+        menu.addItem(separatorBeforeLastUpdated!)
 
         // Last updated item
         lastUpdatedMenuItem = NSMenuItem(title: lastUpdatedString(), action: nil, keyEquivalent: "")
@@ -301,6 +364,43 @@ class StatusBarController {
         statusItem.menu = menu
     }
 
+    private func ensureBuildMenuItemExists(at index: Int, in menu: NSMenu) {
+        while buildMenuItems.count <= index {
+            let item = NSMenuItem(title: "", action: #selector(openBuild(_:)), keyEquivalent: "")
+            item.target = self
+            // Insert before the separator
+            let insertIndex = buildMenuItems.count
+            menu.insertItem(item, at: insertIndex)
+            buildMenuItems.append(item)
+        }
+    }
+
+    private func updateMenuItem(_ item: NSMenuItem, with build: Build) {
+        item.representedObject = build
+        item.isEnabled = true
+        item.action = #selector(openBuild(_:))
+
+        // Set icon from precomputed cache
+        if build.status == .running {
+            item.image = cachedRunningFrames.first
+        } else {
+            item.image = cachedStatusImages[build.status]
+        }
+
+        // Truncate long branch names
+        let maxBranchLength = 20
+        let branch: String
+        if build.branch.count > maxBranchLength {
+            branch = String(build.branch.prefix(maxBranchLength - 1)) + "…"
+        } else {
+            branch = build.branch
+        }
+
+        item.attributedTitle = formatMenuTitle(
+            projectName: build.projectName, branch: branch, workflowName: build.workflowName,
+            duration: build.durationString)
+    }
+
     private func lastUpdatedString() -> String {
         guard let lastUpdated = lastUpdated else {
             return "Last updated: Never"
@@ -317,38 +417,15 @@ class StatusBarController {
         }
     }
 
-    private func createMenuItem(for build: Build) -> NSMenuItem {
-        let item = NSMenuItem(title: "", action: #selector(openBuild(_:)), keyEquivalent: "")
-        item.target = self
-        item.representedObject = build
-
-        // Set icon
-        if build.status == .running {
-            // Use cached frame (will be animated)
-            item.image = cachedRunningFrames.first
-        } else {
-            item.image = createStatusImage(symbolName: build.status.symbolName, color: build.status.color)
-        }
-
-        // Truncate long branch names
-        let maxBranchLength = 20
-        let branch: String
-        if build.branch.count > maxBranchLength {
-            branch = String(build.branch.prefix(maxBranchLength - 1)) + "…"
-        } else {
-            branch = build.branch
-        }
-
-        item.attributedTitle = formatMenuTitle(
-            projectName: build.projectName, branch: branch, workflowName: build.workflowName,
-            duration: build.durationString)
-
-        return item
-    }
-
     private func formatMenuTitle(
         projectName: String, branch: String, workflowName: String, duration: String
     ) -> NSAttributedString {
+        // Use cached version if available (duration changes frequently, so include it in key)
+        let cacheKey = "\(projectName)|\(branch)|\(workflowName)|\(duration)"
+        if let cached = cachedAttributedTitles[cacheKey] {
+            return cached
+        }
+
         let title = "\(projectName) • \(branch) • \(workflowName) "
         let result = NSMutableAttributedString(string: title)
         result.append(
@@ -356,6 +433,13 @@ class StatusBarController {
                 string: duration,
                 attributes: [.foregroundColor: NSColor.secondaryLabelColor]
             ))
+
+        // Cache it (limit cache size to avoid unbounded growth)
+        if cachedAttributedTitles.count > 200 {
+            cachedAttributedTitles.removeAll()
+        }
+        cachedAttributedTitles[cacheKey] = result
+
         return result
     }
 
@@ -379,9 +463,9 @@ class StatusBarController {
             stopAnimation()
             if isStale {
                 // Show neutral icon in system color
-                button.image = createStatusImage(symbolName: "circle.dotted", color: nil)
+                button.image = loadingImage
             } else {
-                button.image = createStatusImage(symbolName: overallStatus.symbolName, color: overallStatus.color)
+                button.image = cachedStatusImages[overallStatus]
             }
         }
     }
@@ -461,23 +545,13 @@ class StatusBarController {
         // Update status bar icon
         button.image = animatedImage
 
-        // Update menu item icons and durations for running builds
+        // Update menu item icons for running builds (image only, not title)
+        // Note: Title updates are expensive (create attributed strings with CoreText backing stores)
+        // and only need to happen once per second, handled by lastUpdatedTimer
         if let menu = statusItem.menu {
             for item in menu.items {
                 if let build = item.representedObject as? Build, build.status == .running {
                     item.image = animatedImage
-
-                    // Update duration text
-                    let maxBranchLength = 20
-                    let branch: String
-                    if build.branch.count > maxBranchLength {
-                        branch = String(build.branch.prefix(maxBranchLength - 1)) + "…"
-                    } else {
-                        branch = build.branch
-                    }
-                    item.attributedTitle = formatMenuTitle(
-                        projectName: build.projectName, branch: branch, workflowName: build.workflowName,
-                        duration: build.durationString)
                 }
             }
         }
