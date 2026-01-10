@@ -68,6 +68,18 @@ class StatusBarController {
         )
     }
 
+    deinit {
+        // Clean up all timers
+        pollingTimer?.invalidate()
+        animationTimer?.invalidate()
+        loadingTimer?.invalidate()
+        lastUpdatedTimer?.invalidate()
+
+        // Remove notification observers
+        NotificationCenter.default.removeObserver(self)
+        DistributedNotificationCenter.default().removeObserver(self)
+    }
+
     private func cacheAnimationFrames() {
         // Pre-generate all animation frames to avoid creating images every frame
         cachedRunningFrames = (0..<totalFrames).map { frame in
@@ -112,8 +124,18 @@ class StatusBarController {
     }
 
     private func createStatusImage(symbolName: String, color: NSColor?) -> NSImage? {
-        // Create cache key from symbol name and color
-        let colorKey = color?.description ?? "template"
+        // Create cache key from symbol name and stable color identifier
+        // Note: NSColor.description is unstable and can vary based on color space/calibration,
+        // causing unbounded cache growth. Use RGBA components instead for a stable key.
+        let colorKey: String
+        if let color = color {
+            let rgb = color.usingColorSpace(.sRGB) ?? color
+            colorKey = String(
+                format: "%.3f,%.3f,%.3f,%.3f",
+                rgb.redComponent, rgb.greenComponent, rgb.blueComponent, rgb.alphaComponent)
+        } else {
+            colorKey = "template"
+        }
         let cacheKey = "\(symbolName)-\(colorKey)"
 
         // Return cached image if available
