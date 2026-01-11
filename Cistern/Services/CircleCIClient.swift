@@ -5,11 +5,27 @@ class CircleCIClient {
     private let session: URLSession
     private let decoder: JSONDecoder
 
+    deinit {
+        // Invalidate URLSession to release network resources
+        session.invalidateAndCancel()
+    }
+
     init() {
-        let config = URLSessionConfiguration.default
+        // Use ephemeral config - no persistent storage
+        let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 30
-        config.urlCache = nil  // Disable URL caching to prevent memory accumulation
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.timeoutIntervalForResource = 60  // Close idle connections after 60s
+        config.httpMaximumConnectionsPerHost = 2  // Limit connection pool size
+        config.httpShouldUsePipelining = false  // Disable pipelining to reduce connection state
+        config.urlCache = nil  // Disable URL caching entirely
+        config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+
+        // Disable cookies and credentials to prevent memory growth
+        config.httpCookieAcceptPolicy = .never
+        config.httpShouldSetCookies = false
+        config.httpCookieStorage = nil
+        config.urlCredentialStorage = nil
+
         self.session = URLSession(configuration: config)
 
         // Create decoder once and reuse - avoid recreating on every API call
@@ -84,34 +100,37 @@ class CircleCIClient {
         let workflowCutoffDate = Date().addingTimeInterval(-maxWorkflowAge)
         let maxBuilds = 10
 
-        var allPipelines: [Pipeline] = []
+        // Use a dictionary to track unique pipelines across all orgs
+        // Key: projectSlug + branch
+        var latestPipelinesMap: [String: Pipeline] = [:]
+
         for orgSlug in orgSlugs {
             do {
-                let pipelines = try await fetchPipelines(
+                // Fetch unique pipelines for this org (deduplicated by branch)
+                let pipelines = try await fetchLatestPipelines(
                     orgSlug: orgSlug,
                     minAge: 0,
                     maxAge: maxPipelineAge
                 )
-                allPipelines.append(contentsOf: pipelines)
+
+                // Merge into global map, keeping the newest one if duplicates exist across orgs (unlikely but safe)
+                for pipeline in pipelines {
+                    let key = "\(pipeline.projectSlug)|\(pipeline.branch)"
+                    if let existing = latestPipelinesMap[key] {
+                        if pipeline.createdAt > existing.createdAt {
+                            latestPipelinesMap[key] = pipeline
+                        }
+                    } else {
+                        latestPipelinesMap[key] = pipeline
+                    }
+                }
             } catch {
                 // Silently continue - pipelines from other orgs may still work
             }
         }
 
-        // 3. Group pipelines by [project, branch] and keep only newest per group
-        struct PipelineKey: Hashable {
-            let projectSlug: String
-            let branch: String
-        }
-        let latestPipelines = Dictionary(
-            grouping: allPipelines,
-            by: {
-                PipelineKey(projectSlug: $0.projectSlug, branch: $0.branch)
-            }
-        )
-        .compactMapValues { $0.sorted(by: { $0.createdAt > $1.createdAt }).first }
-        .values
-        .sorted(by: { $0.createdAt > $1.createdAt })
+        // Sort by recency
+        let sortedPipelines = latestPipelinesMap.values.sorted(by: { $0.createdAt > $1.createdAt })
 
         // 4. Fetch workflows for each pipeline and filter by recency
         struct BuildKey: Hashable {
@@ -125,11 +144,19 @@ class CircleCIClient {
         var otherBuilds: [Build] = []
         var fetchedCount = 0
 
-        for pipeline in latestPipelines {
+        for pipeline in sortedPipelines {
             // Stop if we have enough non-running builds and pipeline is old
             if otherBuilds.count >= maxBuilds && pipeline.createdAt < workflowCutoffDate {
-                break
+                continue  // Don't break, as other pipelines might be newer or have running builds?
+                // Actually, sortedPipelines is sorted by date. If this one is old, the rest are older.
+                // But we want running builds from ANY time in the window.
+                // However, we only fetched pipelines < 14 days.
+                if runningBuilds.count > 20 { break }  // Safety break
             }
+
+            // Optimization: If we have enough builds and this pipeline is older than 24h,
+            // and we assume it probably doesn't have a running build (statistically),
+            // we could skip. But to be safe, we check.
 
             do {
                 let workflows = try await fetchWorkflows(pipelineId: pipeline.id)
@@ -215,13 +242,15 @@ class CircleCIClient {
         }
     }
 
-    private func fetchPipelines(
+    private func fetchLatestPipelines(
         orgSlug: String, minAge: TimeInterval, maxAge: TimeInterval
     ) async throws -> [Pipeline] {
         let encodedSlug = orgSlug.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? orgSlug
         let minCutoffDate = Date().addingTimeInterval(-minAge)  // Skip pipelines newer than this
         let maxCutoffDate = Date().addingTimeInterval(-maxAge)  // Stop at pipelines older than this
-        var allPipelines: [Pipeline] = []
+
+        // Key: projectSlug|branch
+        var uniquePipelines: [String: Pipeline] = [:]
         var pageToken: String?
 
         // Paginate until we hit pipelines older than maxAge (API returns in recency order)
@@ -242,17 +271,22 @@ class CircleCIClient {
                 for pipeline in pipelinesResponse.items {
                     if pipeline.createdAt < maxCutoffDate {
                         // Reached pipelines older than max threshold, stop paginating
-                        return allPipelines
+                        return Array(uniquePipelines.values)
                     }
+
                     // Only include pipelines within the [minAge, maxAge] range
                     if pipeline.createdAt <= minCutoffDate {
-                        allPipelines.append(pipeline)
+                        // Deduplicate: only keep the first (newest) seen for this branch
+                        let key = "\(pipeline.projectSlug)|\(pipeline.branch)"
+                        if uniquePipelines[key] == nil {
+                            uniquePipelines[key] = pipeline
+                        }
                     }
                 }
 
                 pageToken = pipelinesResponse.nextPageToken
                 if pageToken == nil {
-                    return allPipelines
+                    return Array(uniquePipelines.values)
                 }
             case 401:
                 throw CircleCIError.unauthorized

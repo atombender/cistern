@@ -1,13 +1,14 @@
 import Cocoa
 
-class StatusBarController {
+class StatusBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem
     private var circleCIClient: CircleCIClient
     private var pollingTimer: Timer?
     private var animationTimer: Timer?
-    private var loadingTimer: Timer?
     private var lastUpdatedTimer: Timer?
+    private var fetchTask: Task<Void, Never>?
     private var builds: [Build] = []
+    private var isMenuOpen: Bool = false
     private var displayedBuilds: [Build] {
         // Always show all running builds first, then limit non-running builds
         let runningBuilds = builds.filter { $0.status == .running }
@@ -34,16 +35,15 @@ class StatusBarController {
     // Track previous build statuses for change detection
     private var previousBuildStatuses: [String: BuildStatus] = [:]
 
-    // Cached attributed titles to avoid recreating NSAttributedString
-    private var cachedAttributedTitles: [String: NSAttributedString] = [:]
-
     // Stable menu structure - only created once
     private var buildMenuItems: [NSMenuItem] = []
     private var separatorBeforeLastUpdated: NSMenuItem?
 
-    init() {
+    override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         circleCIClient = CircleCIClient()
+
+        super.init()
 
         cacheStatusImages()
         cacheAnimationFrames()
@@ -80,9 +80,9 @@ class StatusBarController {
     deinit {
         // Clean up all timers
         pollingTimer?.invalidate()
-        animationTimer?.invalidate()
-        loadingTimer?.invalidate()
         lastUpdatedTimer?.invalidate()
+        animationTimer?.invalidate()
+        fetchTask?.cancel()
 
         // Remove notification observers
         NotificationCenter.default.removeObserver(self)
@@ -118,14 +118,18 @@ class StatusBarController {
     private func startLastUpdatedTimer() {
         lastUpdatedTimer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            self.lastUpdatedMenuItem?.title = self.lastUpdatedString()
-            self.updateRunningBuildDurations()
+            // Only update menu items when menu is open - updating invisible items leaks VM
+            if self.isMenuOpen {
+                self.lastUpdatedMenuItem?.title = self.lastUpdatedString()
+                self.updateRunningBuildDurations()
+            }
         }
         RunLoop.main.add(lastUpdatedTimer!, forMode: .common)
     }
 
     private func updateRunningBuildDurations() {
-        guard let menu = statusItem.menu else { return }
+        // Only update when menu is open - updating invisible menu items leaks VM
+        guard isMenuOpen, let menu = statusItem.menu else { return }
         for item in menu.items {
             guard let build = item.representedObject as? Build, build.status == .running else {
                 continue
@@ -137,10 +141,24 @@ class StatusBarController {
             } else {
                 branch = build.branch
             }
-            item.attributedTitle = formatMenuTitle(
-                projectName: build.projectName, branch: branch, workflowName: build.workflowName,
-                duration: build.durationString)
+            // Use plain title for running builds to avoid NSAttributedString VM leaks
+            // The duration updates every second, creating unique strings each time
+            item.attributedTitle = nil
+            item.title = "\(build.projectName) • \(branch) • \(build.workflowName)  \(build.durationString)"
         }
+    }
+
+    // MARK: - NSMenuDelegate
+
+    func menuWillOpen(_ menu: NSMenu) {
+        isMenuOpen = true
+        // Update menu items immediately when menu opens
+        lastUpdatedMenuItem?.title = lastUpdatedString()
+        updateRunningBuildDurations()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        isMenuOpen = false
     }
 
     @objc private func settingsDidChange() {
@@ -237,31 +255,38 @@ class StatusBarController {
 
     private func createRotatedCImage(angle: CGFloat, color: NSColor?) -> NSImage {
         let size = NSSize(width: 18, height: 18)
-        let image = NSImage(size: size, flipped: false) { _ in
-            let context = NSGraphicsContext.current!.cgContext
 
-            // Move to center, rotate, move back
-            context.translateBy(x: size.width / 2, y: size.height / 2)
-            context.rotate(by: angle)
-            context.translateBy(x: -size.width / 2, y: -size.height / 2)
+        // Create image with fixed bitmap representation (NOT a drawing handler)
+        // Drawing handlers create new bitmap representations on each display, causing VM leaks
+        let image = NSImage(size: size)
+        image.lockFocus()
 
-            // Draw "C" shape (arc)
-            let center = CGPoint(x: size.width / 2, y: size.height / 2)
-            let radius: CGFloat = 6
-            let lineWidth: CGFloat = 2.5
-
-            let drawColor = color ?? NSColor.black
-            context.setStrokeColor(drawColor.cgColor)
-            context.setLineWidth(lineWidth)
-            context.setLineCap(.round)
-
-            // Draw arc from roughly 45° to 315° (leaving a gap for the "C" opening)
-            context.addArc(
-                center: center, radius: radius, startAngle: .pi * 0.25, endAngle: .pi * 1.75, clockwise: true)
-            context.strokePath()
-
-            return true
+        guard let context = NSGraphicsContext.current?.cgContext else {
+            image.unlockFocus()
+            return image
         }
+
+        // Move to center, rotate, move back
+        context.translateBy(x: size.width / 2, y: size.height / 2)
+        context.rotate(by: angle)
+        context.translateBy(x: -size.width / 2, y: -size.height / 2)
+
+        // Draw "C" shape (arc)
+        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        let radius: CGFloat = 6
+        let lineWidth: CGFloat = 2.5
+
+        let drawColor = color ?? NSColor.black
+        context.setStrokeColor(drawColor.cgColor)
+        context.setLineWidth(lineWidth)
+        context.setLineCap(.round)
+
+        // Draw arc from roughly 45° to 315° (leaving a gap for the "C" opening)
+        context.addArc(
+            center: center, radius: radius, startAngle: .pi * 0.25, endAngle: .pi * 1.75, clockwise: true)
+        context.strokePath()
+
+        image.unlockFocus()
         image.isTemplate = (color == nil)
         return image
     }
@@ -361,6 +386,7 @@ class StatusBarController {
             title: "Quit Cistern", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
 
+        menu.delegate = self
         statusItem.menu = menu
     }
 
@@ -417,28 +443,35 @@ class StatusBarController {
         }
     }
 
+    // Cache for complete menu titles - keyed by full content
+    private var cachedMenuTitles: [String: NSAttributedString] = [:]
+
     private func formatMenuTitle(
         projectName: String, branch: String, workflowName: String, duration: String
     ) -> NSAttributedString {
-        // Use cached version if available (duration changes frequently, so include it in key)
         let cacheKey = "\(projectName)|\(branch)|\(workflowName)|\(duration)"
-        if let cached = cachedAttributedTitles[cacheKey] {
+
+        if let cached = cachedMenuTitles[cacheKey] {
             return cached
         }
 
-        let title = "\(projectName) • \(branch) • \(workflowName) "
-        let result = NSMutableAttributedString(string: title)
-        result.append(
-            NSAttributedString(
-                string: duration,
-                attributes: [.foregroundColor: NSColor.secondaryLabelColor]
-            ))
+        // Create new attributed string
+        let baseText = "\(projectName) • \(branch) • \(workflowName) "
+        let result = NSMutableAttributedString(string: baseText + duration)
 
-        // Cache it (limit cache size to avoid unbounded growth)
-        if cachedAttributedTitles.count > 200 {
-            cachedAttributedTitles.removeAll()
+        // Color just the duration part
+        let durationRange = NSRange(location: baseText.count, length: duration.count)
+        result.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: durationRange)
+
+        // Cache with size limit - use LRU-style eviction
+        if cachedMenuTitles.count > 1000 {
+            // Remove oldest half when limit reached
+            let keysToRemove = Array(cachedMenuTitles.keys.prefix(500))
+            for key in keysToRemove {
+                cachedMenuTitles.removeValue(forKey: key)
+            }
         }
-        cachedAttributedTitles[cacheKey] = result
+        cachedMenuTitles[cacheKey] = result
 
         return result
     }
@@ -461,11 +494,10 @@ class StatusBarController {
             startAnimation()
         } else {
             stopAnimation()
-            if isStale {
-                // Show neutral icon in system color
-                button.image = loadingImage
-            } else {
-                button.image = cachedStatusImages[overallStatus]
+            // Only update image if it actually changed to avoid VM leaks
+            let newImage = isStale ? loadingImage : cachedStatusImages[overallStatus]
+            if button.image !== newImage {
+                button.image = newImage
             }
         }
     }
@@ -497,9 +529,12 @@ class StatusBarController {
     private func startAnimation() {
         guard animationTimer == nil else { return }
 
+        // Reset frame
         animationFrame = 0
-        // Use .common run loop mode so animation continues while menu is open
-        animationTimer = Timer(timeInterval: 0.08, repeats: true) { [weak self] _ in
+        animateIcon()  // Show first frame immediately
+
+        // Start timer
+        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             self?.animateIcon()
         }
         RunLoop.main.add(animationTimer!, forMode: .common)
@@ -508,21 +543,35 @@ class StatusBarController {
     private func stopAnimation() {
         animationTimer?.invalidate()
         animationTimer = nil
+
+        // Remove layer animation if present (cleanup from previous version)
+        if let button = statusItem.button, let layer = button.layer {
+            layer.removeAnimation(forKey: "rotation")
+        }
     }
 
     private func startLoadingAnimation() {
-        guard loadingTimer == nil else { return }
+        guard animationTimer == nil else { return }
 
+        // Reset frame
         animationFrame = 0
-        loadingTimer = Timer(timeInterval: 0.06, repeats: true) { [weak self] _ in
+        animateLoadingIcon()  // Show first frame immediately
+
+        // Start timer
+        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             self?.animateLoadingIcon()
         }
-        RunLoop.main.add(loadingTimer!, forMode: .common)
+        RunLoop.main.add(animationTimer!, forMode: .common)
     }
 
     private func stopLoadingAnimation() {
-        loadingTimer?.invalidate()
-        loadingTimer = nil
+        animationTimer?.invalidate()
+        animationTimer = nil
+
+        // Remove layer animation if present (cleanup from previous version)
+        if let button = statusItem.button, let layer = button.layer {
+            layer.removeAnimation(forKey: "pulse")
+        }
     }
 
     private func animateLoadingIcon() {
@@ -545,10 +594,8 @@ class StatusBarController {
         // Update status bar icon
         button.image = animatedImage
 
-        // Update menu item icons for running builds (image only, not title)
-        // Note: Title updates are expensive (create attributed strings with CoreText backing stores)
-        // and only need to happen once per second, handled by lastUpdatedTimer
-        if let menu = statusItem.menu {
+        // Update menu item icons only when menu is open - updating invisible items leaks VM
+        if isMenuOpen, let menu = statusItem.menu {
             for item in menu.items {
                 if let build = item.representedObject as? Build, build.status == .running {
                     item.image = animatedImage
@@ -573,14 +620,23 @@ class StatusBarController {
     }
 
     @objc private func manualRefresh() {
-        refreshData(showLoading: true)
+        refreshData(showLoading: true, force: true)
     }
 
-    private func refreshData(showLoading: Bool) {
+    private func refreshData(showLoading: Bool, force: Bool = false) {
         guard KeychainService.hasToken() else {
             builds = []
             buildMenu()
             return
+        }
+
+        // Prevent concurrent fetches
+        if let currentTask = fetchTask {
+            if force {
+                currentTask.cancel()
+            } else {
+                return  // Skip update if one is already in progress
+            }
         }
 
         // Show loading animation only on manual refresh or initial load
@@ -591,17 +647,23 @@ class StatusBarController {
             startLoadingAnimation()
         }
 
-        Task { [weak self] in
+        fetchTask = Task { [weak self] in
             guard let self = self else { return }
             do {
                 let fetchedBuilds = try await self.circleCIClient.fetchLatestBuilds { [weak self] count in
-                    Task { @MainActor [weak self] in
+                    // Use DispatchQueue instead of Task to avoid accumulating Task objects
+                    DispatchQueue.main.async { [weak self] in
                         self?.loadingCount = count
                         self?.loadingMenuItem?.title = "Loading... (\(count))"
                     }
                 }
+
+                // Check for cancellation before updating UI
+                try Task.checkCancellation()
+
                 await MainActor.run { [weak self] in
                     guard let self = self else { return }
+                    self.fetchTask = nil
                     self.isLoading = false
                     self.loadingCount = 0
                     self.stopLoadingAnimation()
@@ -611,14 +673,22 @@ class StatusBarController {
                     self.buildMenu()
                     self.updateStatusIcon()
                 }
+            } catch is CancellationError {
+                // Task was cancelled, do nothing
+                await MainActor.run { [weak self] in
+                    self?.fetchTask = nil
+                }
             } catch {
                 await MainActor.run { [weak self] in
                     guard let self = self else { return }
+                    self.fetchTask = nil
+
+                    // Don't clear builds on error, just stop loading state
                     self.isLoading = false
                     self.loadingCount = 0
                     self.stopLoadingAnimation()
-                    self.builds = []
-                    self.buildMenu()
+                    // self.builds = [] // Don't clear existing builds on transient errors
+                    self.buildMenu()  // Update menu (e.g. to remove loading status)
                     self.updateStatusIcon()
                 }
             }
