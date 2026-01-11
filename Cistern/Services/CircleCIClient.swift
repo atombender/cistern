@@ -133,6 +133,20 @@ class CircleCIClient {
         let sortedPipelines = latestPipelinesMap.values.sorted(by: { $0.createdAt > $1.createdAt })
 
         // 4. Fetch workflows for each pipeline and filter by recency
+        return await fetchWorkflowsForPipelines(
+            pipelines: sortedPipelines,
+            workflowCutoffDate: workflowCutoffDate,
+            maxBuilds: maxBuilds,
+            onProgress: onProgress
+        )
+    }
+
+    private func fetchWorkflowsForPipelines(
+        pipelines: [Pipeline],
+        workflowCutoffDate: Date,
+        maxBuilds: Int,
+        onProgress: ((Int) -> Void)?
+    ) async -> [Build] {
         struct BuildKey: Hashable {
             let projectSlug: String
             let branch: String
@@ -144,19 +158,12 @@ class CircleCIClient {
         var otherBuilds: [Build] = []
         var fetchedCount = 0
 
-        for pipeline in sortedPipelines {
+        for pipeline in pipelines {
             // Stop if we have enough non-running builds and pipeline is old
             if otherBuilds.count >= maxBuilds && pipeline.createdAt < workflowCutoffDate {
-                continue  // Don't break, as other pipelines might be newer or have running builds?
-                // Actually, sortedPipelines is sorted by date. If this one is old, the rest are older.
-                // But we want running builds from ANY time in the window.
-                // However, we only fetched pipelines < 14 days.
+                continue
                 if runningBuilds.count > 20 { break }  // Safety break
             }
-
-            // Optimization: If we have enough builds and this pipeline is older than 24h,
-            // and we assume it probably doesn't have a running build (statistically),
-            // we could skip. But to be safe, we check.
 
             do {
                 let workflows = try await fetchWorkflows(pipelineId: pipeline.id)
@@ -186,15 +193,12 @@ class CircleCIClient {
         }
 
         // 5. Combine and sort: running builds first, then others by project/branch/workflow
-        let allBuilds =
-            runningBuilds.sorted {
-                ($0.projectName, $0.branch, $0.workflowName) < ($1.projectName, $1.branch, $1.workflowName)
-            }
+        return runningBuilds.sorted {
+            ($0.projectName, $0.branch, $0.workflowName) < ($1.projectName, $1.branch, $1.workflowName)
+        }
             + otherBuilds.sorted {
                 ($0.projectName, $0.branch, $0.workflowName) < ($1.projectName, $1.branch, $1.workflowName)
             }
-
-        return allBuilds
     }
 
     private func createBuild(from workflow: Workflow, pipeline: Pipeline) -> Build {
@@ -267,21 +271,13 @@ class CircleCIClient {
             case 200:
                 let pipelinesResponse = try decoder.decode(PipelinesResponse.self, from: data)
 
-                // Filter and check if we've hit old pipelines
-                for pipeline in pipelinesResponse.items {
-                    if pipeline.createdAt < maxCutoffDate {
-                        // Reached pipelines older than max threshold, stop paginating
-                        return Array(uniquePipelines.values)
-                    }
-
-                    // Only include pipelines within the [minAge, maxAge] range
-                    if pipeline.createdAt <= minCutoffDate {
-                        // Deduplicate: only keep the first (newest) seen for this branch
-                        let key = "\(pipeline.projectSlug)|\(pipeline.branch)"
-                        if uniquePipelines[key] == nil {
-                            uniquePipelines[key] = pipeline
-                        }
-                    }
+                if shouldStopPagination(
+                    pipelines: pipelinesResponse.items,
+                    maxCutoffDate: maxCutoffDate,
+                    minCutoffDate: minCutoffDate,
+                    uniquePipelines: &uniquePipelines
+                ) {
+                    return Array(uniquePipelines.values)
                 }
 
                 pageToken = pipelinesResponse.nextPageToken
@@ -296,6 +292,27 @@ class CircleCIClient {
                 throw CircleCIError.httpError(statusCode: httpResponse.statusCode)
             }
         }
+    }
+
+    private func shouldStopPagination(
+        pipelines: [Pipeline],
+        maxCutoffDate: Date,
+        minCutoffDate: Date,
+        uniquePipelines: inout [String: Pipeline]
+    ) -> Bool {
+        for pipeline in pipelines {
+            if pipeline.createdAt < maxCutoffDate {
+                return true
+            }
+
+            if pipeline.createdAt <= minCutoffDate {
+                let key = "\(pipeline.projectSlug)|\(pipeline.branch)"
+                if uniquePipelines[key] == nil {
+                    uniquePipelines[key] = pipeline
+                }
+            }
+        }
+        return false
     }
 
     private func fetchWorkflows(pipelineId: String) async throws -> [Workflow] {
