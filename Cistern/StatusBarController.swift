@@ -1,5 +1,6 @@
 import Cocoa
 
+@MainActor
 class StatusBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem
     private let buildMonitor = BuildMonitor()
@@ -41,7 +42,6 @@ class StatusBarController: NSObject, NSMenuDelegate {
         setupBuildMonitor()
         buildMonitor.startPolling()
     }
-
     private func setupBuildMonitor() {
         buildMonitor.onBuildsChanged = { [weak self] builds in
             guard let self = self else { return }

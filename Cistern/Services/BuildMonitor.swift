@@ -1,10 +1,11 @@
 import Cocoa
 import Foundation
 
+@MainActor
 class BuildMonitor {
     private let circleCIClient: CircleCIClient
-    private var pollingTimer: Timer?
-    private var fetchTask: Task<Void, Never>?
+    private var pollingTask: Task<Void, Never>?
+    private var isFetching: Bool = false
 
     // State
     private(set) var builds: [Build] = []
@@ -34,31 +35,43 @@ class BuildMonitor {
     }
 
     deinit {
-        pollingTimer?.invalidate()
-        fetchTask?.cancel()
+        pollingTask?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
     func startPolling() {
-        refreshData()
+        // Cancel any existing polling task
+        pollingTask?.cancel()
 
-        let interval = Settings.pollInterval
-        pollingTimer?.invalidate()
-        pollingTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            self?.refreshData()
+        // Create a single long-running Task that polls in a loop
+        // This avoids creating thousands of Tasks over time which leaks VM
+        pollingTask = Task { [weak self] in
+            // Initial fetch
+            await self?.doFetch(showLoading: false)
+
+            // Polling loop
+            while !Task.isCancelled {
+                let interval = Settings.pollInterval
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+
+                if Task.isCancelled { break }
+                await self?.doFetch(showLoading: false)
+            }
         }
     }
 
     func manualRefresh() {
-        refreshData(showLoading: true, force: true)
+        Task {
+            await doFetch(showLoading: true)
+        }
     }
 
     @objc private func settingsDidChange() {
-        pollingTimer?.invalidate()
+        // Restart polling with new settings
         startPolling()
     }
 
-    private func refreshData(showLoading: Bool = false, force: Bool = false) {
+    private func doFetch(showLoading: Bool) async {
         guard KeychainService.hasToken() else {
             self.builds = []
             self.onBuildsChanged?([])
@@ -66,16 +79,10 @@ class BuildMonitor {
         }
 
         // Prevent concurrent fetches
-        if let currentTask = fetchTask {
-            if force {
-                currentTask.cancel()
-            } else {
-                return
-            }
-        }
+        guard !isFetching else { return }
+        isFetching = true
 
         // Determine if we should show loading state
-        // If it's a manual refresh, or if we have no builds yet (initial load), show loading
         let shouldShowLoading = showLoading || builds.isEmpty
 
         if shouldShowLoading {
@@ -83,43 +90,23 @@ class BuildMonitor {
             onLoadingStateChanged?(true, 0)
         }
 
-        fetchTask = Task { [weak self] in
-            guard let self = self else { return }
-            do {
-                let fetchedBuilds = try await self.circleCIClient.fetchLatestBuilds { [weak self] count in
-                    DispatchQueue.main.async { [weak self] in
-                        if self?.isLoading == true {
-                            self?.onLoadingStateChanged?(true, count)
-                        }
-                    }
-                }
+        do {
+            let fetchedBuilds = try await circleCIClient.fetchLatestBuilds()
 
-                try Task.checkCancellation()
+            isFetching = false
+            isLoading = false
+            onLoadingStateChanged?(false, 0)
 
-                await MainActor.run { [weak self] in
-                    guard let self = self else { return }
-                    self.fetchTask = nil
-                    self.isLoading = false
-                    self.onLoadingStateChanged?(false, 0)
-
-                    self.builds = fetchedBuilds
-                    self.lastUpdated = Date()
-                    self.onBuildsChanged?(fetchedBuilds)
-                }
-            } catch is CancellationError {
-                await MainActor.run { [weak self] in
-                    self?.fetchTask = nil
-                }
-            } catch {
-                await MainActor.run { [weak self] in
-                    guard let self = self else { return }
-                    self.fetchTask = nil
-                    self.isLoading = false
-                    self.onLoadingStateChanged?(false, 0)
-                    self.onError?(error)
-                    // Don't clear builds on error, keep existing
-                }
-            }
+            builds = fetchedBuilds
+            lastUpdated = Date()
+            onBuildsChanged?(fetchedBuilds)
+        } catch is CancellationError {
+            isFetching = false
+        } catch {
+            isFetching = false
+            isLoading = false
+            onLoadingStateChanged?(false, 0)
+            onError?(error)
         }
     }
 }

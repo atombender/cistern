@@ -4,28 +4,23 @@ class CircleCIClient {
     private let baseURL = "https://circleci.com/api/v2"
     private let session: URLSession
     private let decoder: JSONDecoder
+    private var cachedToken: String?
 
     deinit {
-        // Invalidate URLSession to release network resources
         session.invalidateAndCancel()
     }
 
     init() {
-        // Use ephemeral config - no persistent storage
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 60  // Close idle connections after 60s
-        config.httpMaximumConnectionsPerHost = 2  // Limit connection pool size
-        config.httpShouldUsePipelining = false  // Disable pipelining to reduce connection state
-        config.urlCache = nil  // Disable URL caching entirely
+        config.timeoutIntervalForResource = 60
+        config.httpMaximumConnectionsPerHost = 2
+        config.urlCache = nil
         config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-
-        // Disable cookies and credentials to prevent memory growth
         config.httpCookieAcceptPolicy = .never
         config.httpShouldSetCookies = false
         config.httpCookieStorage = nil
         config.urlCredentialStorage = nil
-
         self.session = URLSession(configuration: config)
 
         // Create decoder once and reuse - avoid recreating on every API call
@@ -58,7 +53,11 @@ class CircleCIClient {
     }
 
     private func makeRequest(endpoint: String) throws -> URLRequest {
-        guard let token = KeychainService.getToken() else {
+        if cachedToken == nil {
+            cachedToken = KeychainService.getToken()
+        }
+
+        guard let token = cachedToken else {
             throw CircleCIError.noToken
         }
 
@@ -82,7 +81,7 @@ class CircleCIClient {
         return (data, httpResponse)
     }
 
-    func fetchLatestBuilds(onProgress: ((Int) -> Void)? = nil) async throws -> [Build] {
+    func fetchLatestBuilds() async throws -> [Build] {
         // 1. Determine which orgs to fetch
         let orgSlugs: [String]
         if let configuredOrg = Settings.organization {
@@ -136,16 +135,14 @@ class CircleCIClient {
         return await fetchWorkflowsForPipelines(
             pipelines: sortedPipelines,
             workflowCutoffDate: workflowCutoffDate,
-            maxBuilds: maxBuilds,
-            onProgress: onProgress
+            maxBuilds: maxBuilds
         )
     }
 
     private func fetchWorkflowsForPipelines(
         pipelines: [Pipeline],
         workflowCutoffDate: Date,
-        maxBuilds: Int,
-        onProgress: ((Int) -> Void)?
+        maxBuilds: Int
     ) async -> [Build] {
         struct BuildKey: Hashable {
             let projectSlug: String
@@ -156,7 +153,6 @@ class CircleCIClient {
         var seenKeys = Set<BuildKey>()
         var runningBuilds: [Build] = []
         var otherBuilds: [Build] = []
-        var fetchedCount = 0
 
         for pipeline in pipelines {
             // Stop if we have enough non-running builds and pipeline is old
@@ -167,8 +163,6 @@ class CircleCIClient {
 
             do {
                 let workflows = try await fetchWorkflows(pipelineId: pipeline.id)
-                fetchedCount += 1
-                onProgress?(fetchedCount)
 
                 for workflow in workflows where workflow.createdAt > workflowCutoffDate {
                     let buildKey = BuildKey(
@@ -240,6 +234,7 @@ class CircleCIClient {
         case 200:
             return try decoder.decode([Organization].self, from: data)
         case 401:
+            cachedToken = nil
             throw CircleCIError.unauthorized
         default:
             throw CircleCIError.httpError(statusCode: httpResponse.statusCode)
@@ -285,6 +280,7 @@ class CircleCIClient {
                     return Array(uniquePipelines.values)
                 }
             case 401:
+                cachedToken = nil
                 throw CircleCIError.unauthorized
             case 429:
                 throw CircleCIError.rateLimited
@@ -324,6 +320,7 @@ class CircleCIClient {
             let workflowsResponse = try decoder.decode(WorkflowsResponse.self, from: data)
             return workflowsResponse.items
         case 401:
+            cachedToken = nil
             throw CircleCIError.unauthorized
         case 429:
             throw CircleCIError.rateLimited
