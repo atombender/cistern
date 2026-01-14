@@ -314,24 +314,29 @@ class StatusBarController: NSObject, NSMenuDelegate {
 
         let visibleBuilds = displayedBuilds
         let hasRunningBuilds = visibleBuilds.contains { $0.status == .running }
-        let overallStatus = visibleBuilds.map { $0.status }.worstStatus()
+
+        // Find the newest completed build by stoppedAt time
+        let newestBuild =
+            visibleBuilds
+            .filter { $0.stoppedAt != nil }
+            .max { ($0.stoppedAt ?? .distantPast) < ($1.stoppedAt ?? .distantPast) }
 
         // Check if all builds are stale (> 30 mins since last completed)
         let staleThreshold: TimeInterval = 30 * 60
-        let mostRecentStop = visibleBuilds.compactMap { $0.stoppedAt }.max()
-        let isStale =
-            !hasRunningBuilds && (mostRecentStop == nil || Date().timeIntervalSince(mostRecentStop!) > staleThreshold)
+        let isStale = newestBuild == nil || Date().timeIntervalSince(newestBuild!.stoppedAt!) > staleThreshold
 
         // Start or stop animation based on running builds
         if hasRunningBuilds {
             startAnimation()
         } else {
             stopAnimation()
-            // Only update image if it actually changed to avoid VM leaks
-            let newImage =
-                isStale
-                ? StatusIconService.shared.getLoadingImage()
-                : StatusIconService.shared.getStatusImage(for: overallStatus)
+            // Show status of newest build, or loading icon if stale/no builds
+            let newImage: NSImage?
+            if isStale {
+                newImage = StatusIconService.shared.getLoadingImage()
+            } else {
+                newImage = StatusIconService.shared.getStatusImage(for: newestBuild!.status)
+            }
             if button.image !== newImage {
                 button.image = newImage
             }
