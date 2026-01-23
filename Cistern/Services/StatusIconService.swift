@@ -9,6 +9,7 @@ class StatusIconService {
 
     // Cached animation frames
     private var cachedRunningFrames: [NSImage] = []
+    private var cachedFailingFrames: [NSImage] = []
     private var cachedLoadingFrames: [NSImage] = []
     private let totalFrames = 36
 
@@ -49,6 +50,11 @@ class StatusIconService {
         return cachedRunningFrames[index % cachedRunningFrames.count]
     }
 
+    func getFailingFrame(index: Int) -> NSImage? {
+        guard !cachedFailingFrames.isEmpty else { return nil }
+        return cachedFailingFrames[index % cachedFailingFrames.count]
+    }
+
     func getLoadingFrame(index: Int) -> NSImage? {
         guard !cachedLoadingFrames.isEmpty else { return nil }
         return cachedLoadingFrames[index % cachedLoadingFrames.count]
@@ -70,7 +76,11 @@ class StatusIconService {
     private func cacheAnimationFrames() {
         cachedRunningFrames = (0..<totalFrames).map { frame in
             let angle = CGFloat(frame) * (.pi * 2 / CGFloat(totalFrames))
-            return createRotatedCImage(angle: angle, color: .systemOrange)
+            return createRotatedCImage(angle: angle, color: nil)  // Neutral color (template)
+        }
+        cachedFailingFrames = (0..<totalFrames).map { frame in
+            let angle = CGFloat(frame) * (.pi * 2 / CGFloat(totalFrames))
+            return createRotatedCImage(angle: angle, color: .systemOrange)  // Orange for failing
         }
         cachedLoadingFrames = (0..<totalFrames).map { frame in
             let phase = CGFloat(frame) / CGFloat(totalFrames)

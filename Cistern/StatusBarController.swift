@@ -16,6 +16,7 @@ class StatusBarController: NSObject, NSMenuDelegate {
         return runningBuilds + otherBuilds.prefix(maxOtherBuilds)
     }
     private var animationFrame: Int = 0
+    private var hasFailingBuilds: Bool = false
     private var loadingCount: Int = 0
     private var lastUpdatedMenuItem: NSMenuItem?
     private var loadingMenuItem: NSMenuItem?
@@ -242,6 +243,8 @@ class StatusBarController: NSObject, NSMenuDelegate {
         // Set icon from precomputed cache
         if build.status == .running {
             item.image = StatusIconService.shared.getRunningFrame(index: 0)
+        } else if build.status == .failing {
+            item.image = StatusIconService.shared.getFailingFrame(index: 0)
         } else {
             item.image = StatusIconService.shared.getStatusImage(for: build.status)
         }
@@ -313,30 +316,37 @@ class StatusBarController: NSObject, NSMenuDelegate {
         guard let button = statusItem.button else { return }
 
         let visibleBuilds = displayedBuilds
-        let hasRunningBuilds = visibleBuilds.contains { $0.status == .running }
 
-        // Find the newest completed build by stoppedAt time
-        let newestBuild =
-            visibleBuilds
-            .filter { $0.stoppedAt != nil }
-            .max { ($0.stoppedAt ?? .distantPast) < ($1.stoppedAt ?? .distantPast) }
-
-        // Check if all builds are stale (> 30 mins since last completed)
-        let staleThreshold: TimeInterval = 30 * 60
-        let isStale = newestBuild == nil || Date().timeIntervalSince(newestBuild!.stoppedAt!) > staleThreshold
-
-        // Start or stop animation based on running builds
-        if hasRunningBuilds {
-            startAnimation()
-        } else {
+        // Find the newest build by createdAt time
+        guard let newestBuild = visibleBuilds.max(by: { $0.createdAt < $1.createdAt }) else {
+            // No builds - show loading icon
             stopAnimation()
-            // Show status of newest build, or loading icon if stale/no builds
-            let newImage: NSImage?
-            if isStale {
-                newImage = StatusIconService.shared.getLoadingImage()
-            } else {
-                newImage = StatusIconService.shared.getStatusImage(for: newestBuild!.status)
-            }
+            button.image = StatusIconService.shared.getLoadingImage()
+            return
+        }
+
+        // Check if builds are stale (> 30 mins since newest build completed)
+        let staleThreshold: TimeInterval = 30 * 60
+        let isStale =
+            newestBuild.stoppedAt == nil
+            ? false  // Running/failing builds are not stale
+            : Date().timeIntervalSince(newestBuild.stoppedAt!) > staleThreshold
+
+        // Determine icon based on newest build's status
+        switch newestBuild.status {
+        case .running:
+            hasFailingBuilds = false
+            startAnimation()
+        case .failing:
+            hasFailingBuilds = true
+            startAnimation()
+        default:
+            hasFailingBuilds = false
+            stopAnimation()
+            let newImage: NSImage? =
+                isStale
+                ? StatusIconService.shared.getLoadingImage()
+                : StatusIconService.shared.getStatusImage(for: newestBuild.status)
             if button.image !== newImage {
                 button.image = newImage
             }
@@ -428,7 +438,14 @@ class StatusBarController: NSObject, NSMenuDelegate {
         guard let button = statusItem.button else { return }
 
         // Use cached frame instead of creating new image
-        guard let animatedImage = StatusIconService.shared.getRunningFrame(index: animationFrame) else { return }
+        // Use orange (failing) frames if any build is failing, otherwise neutral (running) frames
+        let runningImage =
+            hasFailingBuilds
+            ? StatusIconService.shared.getFailingFrame(index: animationFrame)
+            : StatusIconService.shared.getRunningFrame(index: animationFrame)
+        let failingImage = StatusIconService.shared.getFailingFrame(index: animationFrame)
+
+        guard let animatedImage = runningImage else { return }
 
         // Update status bar icon
         button.image = animatedImage
@@ -436,8 +453,12 @@ class StatusBarController: NSObject, NSMenuDelegate {
         // Update menu item icons only when menu is open - updating invisible items leaks VM
         if isMenuOpen, let menu = statusItem.menu {
             for item in menu.items {
-                if let build = item.representedObject as? Build, build.status == .running {
-                    item.image = animatedImage
+                if let build = item.representedObject as? Build {
+                    if build.status == .running {
+                        item.image = runningImage
+                    } else if build.status == .failing {
+                        item.image = failingImage
+                    }
                 }
             }
         }

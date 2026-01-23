@@ -69,7 +69,8 @@ enum BuildStatus: String {
         switch self {
         case .success: return .systemGreen
         case .running: return .systemOrange
-        case .failed, .error, .failing: return .systemRed
+        case .failing: return .systemOrange
+        case .failed, .error: return .systemRed
         case .onHold: return .systemYellow
         case .canceled, .notRun: return .systemGray
         case .unknown: return nil
@@ -80,7 +81,8 @@ enum BuildStatus: String {
         switch self {
         case .success: return "checkmark.circle.fill"
         case .running: return "arrow.triangle.2.circlepath.circle.fill"
-        case .failed, .error, .failing: return "xmark.circle.fill"
+        case .failing: return "arrow.triangle.2.circlepath.circle.fill"  // Same as running, but colored orange
+        case .failed, .error: return "xmark.circle.fill"
         case .onHold: return "pause.circle.fill"
         case .canceled, .notRun: return "minus.circle.fill"
         case .unknown: return "circle.dotted"
