@@ -8,6 +8,8 @@ struct Build {
     let pipelineNumber: Int
     let status: BuildStatus
     let webURL: String
+    /// When the workflow was created (used for sorting by recency)
+    let createdAt: Date
     /// For completed builds, the final duration. For running builds, this is nil.
     let completedDuration: TimeInterval?
     /// For running builds, the start time. For completed builds, this is nil.

@@ -186,13 +186,9 @@ class CircleCIClient {
             }
         }
 
-        // 5. Combine and sort: running builds first, then others by project/branch/workflow
-        return runningBuilds.sorted {
-            ($0.projectName, $0.branch, $0.workflowName) < ($1.projectName, $1.branch, $1.workflowName)
-        }
-            + otherBuilds.sorted {
-                ($0.projectName, $0.branch, $0.workflowName) < ($1.projectName, $1.branch, $1.workflowName)
-            }
+        // 5. Combine and sort: running builds first, then all sorted by newest workflow first
+        return runningBuilds.sorted { $0.createdAt > $1.createdAt }
+            + otherBuilds.sorted { $0.createdAt > $1.createdAt }
     }
 
     private func createBuild(from workflow: Workflow, pipeline: Pipeline) -> Build {
@@ -220,6 +216,7 @@ class CircleCIClient {
             pipelineNumber: pipeline.number,
             status: status,
             webURL: pipeline.webURL,
+            createdAt: workflow.createdAt,
             completedDuration: completedDuration,
             startedAt: startedAt,
             stoppedAt: stoppedAt
