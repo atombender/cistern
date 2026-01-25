@@ -258,9 +258,16 @@ class StatusBarController: NSObject, NSMenuDelegate {
             branch = build.branch
         }
 
-        item.attributedTitle = formatMenuTitle(
-            projectName: build.projectName, branch: branch, workflowName: build.workflowName,
-            duration: build.durationString)
+        // For running/failing builds, use plain title to avoid NSAttributedString VM leaks
+        // The duration changes frequently, creating many unique attributed strings
+        if build.status == .running || build.status == .failing {
+            item.attributedTitle = nil
+            item.title = "\(build.projectName) • \(branch) • \(build.workflowName)  \(build.durationString)"
+        } else {
+            item.attributedTitle = formatMenuTitle(
+                projectName: build.projectName, branch: branch, workflowName: build.workflowName,
+                duration: build.durationString)
+        }
     }
 
     private func lastUpdatedString() -> String {
@@ -317,39 +324,48 @@ class StatusBarController: NSObject, NSMenuDelegate {
 
         let visibleBuilds = displayedBuilds
 
-        // Find the newest build by createdAt time
-        guard let newestBuild = visibleBuilds.max(by: { $0.createdAt < $1.createdAt }) else {
+        guard !visibleBuilds.isEmpty else {
             // No builds - show loading icon
             stopAnimation()
             button.image = StatusIconService.shared.getLoadingImage()
             return
         }
 
+        // Check for in-progress builds first - running/failing takes precedence over everything
+        let hasRunning = visibleBuilds.contains { $0.status == .running }
+        let hasFailing = visibleBuilds.contains { $0.status == .failing }
+
+        if hasRunning || hasFailing {
+            // Show animated icon for in-progress builds
+            hasFailingBuilds = hasFailing
+            startAnimation()
+            return
+        }
+
+        // No in-progress builds - use worst terminal status
+        let worstStatus = visibleBuilds.map { $0.status }.worstStatus()
+
         // Check if builds are stale (> 30 mins since newest build completed)
         let staleThreshold: TimeInterval = 30 * 60
-        let isStale =
-            newestBuild.stoppedAt == nil
-            ? false  // Running/failing builds are not stale
-            : Date().timeIntervalSince(newestBuild.stoppedAt!) > staleThreshold
+        let newestCompletedBuild = visibleBuilds
+            .filter { $0.stoppedAt != nil }
+            .max(by: { $0.stoppedAt! < $1.stoppedAt! })
+        let isStale: Bool
+        if let newest = newestCompletedBuild, let stoppedAt = newest.stoppedAt {
+            isStale = Date().timeIntervalSince(stoppedAt) > staleThreshold
+        } else {
+            isStale = false
+        }
 
-        // Determine icon based on newest build's status
-        switch newestBuild.status {
-        case .running:
-            hasFailingBuilds = false
-            startAnimation()
-        case .failing:
-            hasFailingBuilds = true
-            startAnimation()
-        default:
-            hasFailingBuilds = false
-            stopAnimation()
-            let newImage: NSImage? =
-                isStale
-                ? StatusIconService.shared.getLoadingImage()
-                : StatusIconService.shared.getStatusImage(for: newestBuild.status)
-            if button.image !== newImage {
-                button.image = newImage
-            }
+        // Show static icon for terminal states
+        hasFailingBuilds = false
+        stopAnimation()
+        let newImage: NSImage? =
+            isStale
+            ? StatusIconService.shared.getLoadingImage()
+            : StatusIconService.shared.getStatusImage(for: worstStatus)
+        if button.image !== newImage {
+            button.image = newImage
         }
     }
 
@@ -358,13 +374,17 @@ class StatusBarController: NSObject, NSMenuDelegate {
             let key = "\(build.projectSlug)/\(build.branch)/\(build.workflowName)"
             let oldStatus = previousBuildStatuses[key]
 
-            // Build started: now running, wasn't running before (or is new)
-            if build.status == .running && oldStatus != .running {
+            // Build started: now running (or failing), wasn't in progress before (or is new)
+            let isInProgress = build.status == .running || build.status == .failing
+            let wasInProgress = oldStatus == .running || oldStatus == .failing
+            if isInProgress && !wasInProgress {
                 NotificationService.shared.sendBuildStarted(build: build)
             }
 
-            // Build finished: was running, now completed
-            if let old = oldStatus, old == .running && build.status != .running {
+            // Build finished: was in progress (running or failing), now in a terminal state
+            // Don't notify on running -> failing transition (workflow still in progress)
+            let isTerminal = build.status != .running && build.status != .failing
+            if wasInProgress && isTerminal {
                 NotificationService.shared.sendBuildFinished(build: build)
             }
         }
