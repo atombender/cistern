@@ -155,10 +155,9 @@ class CircleCIClient {
         var otherBuilds: [Build] = []
 
         for pipeline in pipelines {
-            // Stop if we have enough non-running builds and pipeline is old
+            // Stop early if we have enough builds and pipeline is old
             if otherBuilds.count >= maxBuilds && pipeline.createdAt < workflowCutoffDate {
-                continue
-                if runningBuilds.count > 20 { break }  // Safety break
+                break
             }
 
             do {
