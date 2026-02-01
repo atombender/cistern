@@ -15,7 +15,6 @@ struct Pipeline: Codable {
     let projectSlug: String
     let number: Int
     let createdAt: Date
-    let trigger: PipelineTrigger
     let vcs: PipelineVCS?
 
     enum CodingKeys: String, CodingKey {
@@ -23,7 +22,6 @@ struct Pipeline: Codable {
         case projectSlug = "project_slug"
         case number
         case createdAt = "created_at"
-        case trigger
         case vcs
     }
 
@@ -46,22 +44,6 @@ struct Pipeline: Codable {
     }
 }
 
-struct PipelineTrigger: Codable {
-    let type: String
-    let actor: PipelineActor?
-}
-
-struct PipelineActor: Codable {
-    let login: String
-    let avatarUrl: String?
-
-    enum CodingKeys: String, CodingKey {
-        case login
-        case avatarUrl = "avatar_url"
-    }
-}
-
 struct PipelineVCS: Codable {
     let branch: String?
-    let revision: String?
 }

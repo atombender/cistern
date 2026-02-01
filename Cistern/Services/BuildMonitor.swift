@@ -1,5 +1,4 @@
 import Cocoa
-import Foundation
 
 @MainActor
 class BuildMonitor {
@@ -84,7 +83,6 @@ class BuildMonitor {
 
         // Determine if we should show loading state
         let shouldShowLoading = showLoading || builds.isEmpty
-
         if shouldShowLoading {
             isLoading = true
             onLoadingStateChanged?(true, 0)

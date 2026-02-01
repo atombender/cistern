@@ -5,7 +5,6 @@ struct Build {
     let projectName: String
     let branch: String
     let workflowName: String
-    let pipelineNumber: Int
     let status: BuildStatus
     let webURL: String
     /// When the workflow was created (used for sorting by recency)
@@ -51,20 +50,6 @@ enum BuildStatus: String {
     case canceled
     case unknown
 
-    var displayName: String {
-        switch self {
-        case .success: return "Success"
-        case .running: return "Running"
-        case .notRun: return "Not Run"
-        case .failed: return "Failed"
-        case .error: return "Error"
-        case .failing: return "Failing"
-        case .onHold: return "On Hold"
-        case .canceled: return "Canceled"
-        case .unknown: return "Unknown"
-        }
-    }
-
     var color: NSColor? {
         switch self {
         case .success: return .systemGreen
@@ -79,25 +64,18 @@ enum BuildStatus: String {
 
     var symbolName: String {
         switch self {
-        case .success: return "checkmark.circle.fill"
-        case .running: return "arrow.triangle.2.circlepath.circle.fill"
-        case .failing: return "arrow.triangle.2.circlepath.circle.fill"  // Same as running, but colored orange
-        case .failed, .error: return "xmark.circle.fill"
-        case .onHold: return "pause.circle.fill"
-        case .canceled, .notRun: return "minus.circle.fill"
-        case .unknown: return "circle.dotted"
-        }
-    }
-
-    /// Priority for determining worst status (higher = worse)
-    var priority: Int {
-        switch self {
-        case .failed, .error: return 5
-        case .failing: return 4
-        case .running: return 3
-        case .onHold: return 2
-        case .canceled, .notRun, .unknown: return 1
-        case .success: return 0
+        case .success:
+            return "checkmark.circle.fill"
+        case .running, .failing:
+            return "arrow.triangle.2.circlepath.circle.fill"
+        case .failed, .error:
+            return "xmark.circle.fill"
+        case .onHold:
+            return "pause.circle.fill"
+        case .canceled, .notRun:
+            return "minus.circle.fill"
+        case .unknown:
+            return "circle.dotted"
         }
     }
 
@@ -113,13 +91,5 @@ enum BuildStatus: String {
         case .canceled: return .canceled
         case .unknown: return .unknown
         }
-    }
-}
-
-extension Array where Element == BuildStatus {
-    /// Returns the worst status from the array based on priority
-    func worstStatus() -> BuildStatus {
-        guard !isEmpty else { return .unknown }
-        return self.max(by: { $0.priority < $1.priority }) ?? .unknown
     }
 }

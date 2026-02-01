@@ -21,9 +21,9 @@ class CircleCIClient {
         config.httpShouldSetCookies = false
         config.httpCookieStorage = nil
         config.urlCredentialStorage = nil
+
         self.session = URLSession(configuration: config)
 
-        // Create decoder once and reuse - avoid recreating on every API call
         let jsonDecoder = JSONDecoder()
         let formatterWithFractional = ISO8601DateFormatter()
         formatterWithFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -213,7 +213,6 @@ class CircleCIClient {
             projectName: pipeline.projectName,
             branch: pipeline.branch,
             workflowName: workflow.name,
-            pipelineNumber: pipeline.number,
             status: status,
             webURL: pipeline.webURL,
             createdAt: workflow.createdAt,
