@@ -6,11 +6,17 @@ enum Settings {
     private enum Keys {
         static let organization = "organization"
         static let pollInterval = "pollInterval"
+        static let excludeWorkflowPattern = "excludeWorkflowPattern"
     }
 
     static var organization: String? {
         get { defaults.string(forKey: Keys.organization) }
         set { defaults.set(newValue, forKey: Keys.organization) }
+    }
+
+    static var excludeWorkflowPattern: String? {
+        get { defaults.string(forKey: Keys.excludeWorkflowPattern) }
+        set { defaults.set(newValue, forKey: Keys.excludeWorkflowPattern) }
     }
 
     /// Poll interval in seconds (default: 10, range: 1-3600)

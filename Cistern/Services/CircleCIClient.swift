@@ -154,6 +154,11 @@ class CircleCIClient {
         var runningBuilds: [Build] = []
         var otherBuilds: [Build] = []
 
+        let excludeRegex: NSRegularExpression? = {
+            guard let pattern = Settings.excludeWorkflowPattern, !pattern.isEmpty else { return nil }
+            return try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        }()
+
         for pipeline in pipelines {
             // Stop early if we have enough builds and pipeline is old
             if otherBuilds.count >= maxBuilds && pipeline.createdAt < workflowCutoffDate {
@@ -164,6 +169,13 @@ class CircleCIClient {
                 let workflows = try await fetchWorkflows(pipelineId: pipeline.id)
 
                 for workflow in workflows where workflow.createdAt > workflowCutoffDate {
+                    if let regex = excludeRegex {
+                        let subject = "\(pipeline.projectName)/\(workflow.name)"
+                        let range = NSRange(subject.startIndex..., in: subject)
+                        if regex.firstMatch(in: subject, range: range) != nil {
+                            continue
+                        }
+                    }
                     let buildKey = BuildKey(
                         projectSlug: pipeline.projectSlug,
                         branch: pipeline.branch,
