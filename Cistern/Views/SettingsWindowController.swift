@@ -1,4 +1,5 @@
 import Cocoa
+import ServiceManagement
 
 class SettingsWindowController: NSWindowController {
     static let shared = SettingsWindowController()
@@ -7,13 +8,15 @@ class SettingsWindowController: NSWindowController {
     private var orgField: NSTextField!
     private var pollSlider: NSSlider!
     private var pollValueLabel: NSTextField!
+    private var loginCheckbox: NSButton!
+    private var excludeField: NSTextField!
     private var statusLabel: NSTextField!
     private var saveButton: NSButton!
     private var testButton: NSButton!
 
     private init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 450, height: 290),
+            contentRect: NSRect(x: 0, y: 0, width: 450, height: 380),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -40,14 +43,14 @@ class SettingsWindowController: NSWindowController {
 
         // Token label
         let tokenLabel = NSTextField(labelWithString: "CircleCI API Token:")
-        tokenLabel.frame = NSRect(x: padding, y: 240, width: 150, height: fieldHeight)
+        tokenLabel.frame = NSRect(x: padding, y: 330, width: 150, height: fieldHeight)
         contentView.addSubview(tokenLabel)
 
         // Token field
         tokenField = NSSecureTextField(
             frame: NSRect(
                 x: padding,
-                y: 210,
+                y: 300,
                 width: contentView.bounds.width - (padding * 2),
                 height: fieldHeight
             ))
@@ -57,21 +60,21 @@ class SettingsWindowController: NSWindowController {
         // Token help text
         let tokenHelpLabel = NSTextField(
             wrappingLabelWithString: "Get your token from CircleCI → User Settings → Personal API Tokens")
-        tokenHelpLabel.frame = NSRect(x: padding, y: 185, width: contentView.bounds.width - (padding * 2), height: 20)
+        tokenHelpLabel.frame = NSRect(x: padding, y: 275, width: contentView.bounds.width - (padding * 2), height: 20)
         tokenHelpLabel.font = NSFont.systemFont(ofSize: 11)
         tokenHelpLabel.textColor = .secondaryLabelColor
         contentView.addSubview(tokenHelpLabel)
 
         // Org label
         let orgLabel = NSTextField(labelWithString: "Organization (optional):")
-        orgLabel.frame = NSRect(x: padding, y: 155, width: 200, height: fieldHeight)
+        orgLabel.frame = NSRect(x: padding, y: 245, width: 200, height: fieldHeight)
         contentView.addSubview(orgLabel)
 
         // Org field
         orgField = NSTextField(
             frame: NSRect(
                 x: padding,
-                y: 125,
+                y: 215,
                 width: contentView.bounds.width - (padding * 2),
                 height: fieldHeight
             ))
@@ -80,12 +83,13 @@ class SettingsWindowController: NSWindowController {
 
         // Poll interval label
         let pollLabel = NSTextField(labelWithString: "Refresh interval:")
-        pollLabel.frame = NSRect(x: padding, y: 90, width: 120, height: fieldHeight)
+        pollLabel.frame = NSRect(x: padding, y: 180, width: 120, height: fieldHeight)
         contentView.addSubview(pollLabel)
 
         // Poll value label (shows current value)
         pollValueLabel = NSTextField(labelWithString: "10s")
-        pollValueLabel.frame = NSRect(x: contentView.bounds.width - padding - 50, y: 90, width: 50, height: fieldHeight)
+        pollValueLabel.frame = NSRect(
+            x: contentView.bounds.width - padding - 50, y: 180, width: 50, height: fieldHeight)
         pollValueLabel.alignment = .right
         contentView.addSubview(pollValueLabel)
 
@@ -93,7 +97,7 @@ class SettingsWindowController: NSWindowController {
         pollSlider = NSSlider(
             frame: NSRect(
                 x: padding,
-                y: 65,
+                y: 155,
                 width: contentView.bounds.width - (padding * 2),
                 height: 21
             ))
@@ -102,6 +106,30 @@ class SettingsWindowController: NSWindowController {
         pollSlider.target = self
         pollSlider.action = #selector(sliderChanged(_:))
         contentView.addSubview(pollSlider)
+
+        // Start at Login checkbox
+        loginCheckbox = NSButton(
+            checkboxWithTitle: "Start at Login",
+            target: self,
+            action: #selector(loginCheckboxChanged(_:)))
+        loginCheckbox.frame = NSRect(x: padding, y: 125, width: 200, height: fieldHeight)
+        contentView.addSubview(loginCheckbox)
+
+        // Exclude Workflows label
+        let excludeLabel = NSTextField(labelWithString: "Exclude Workflows (regex):")
+        excludeLabel.frame = NSRect(x: padding, y: 95, width: 200, height: fieldHeight)
+        contentView.addSubview(excludeLabel)
+
+        // Exclude Workflows field
+        excludeField = NSTextField(
+            frame: NSRect(
+                x: padding,
+                y: 65,
+                width: contentView.bounds.width - (padding * 2),
+                height: fieldHeight
+            ))
+        excludeField.placeholderString = "e.g., deploy|nightly"
+        contentView.addSubview(excludeField)
 
         // Status label
         statusLabel = NSTextField(labelWithString: "")
@@ -143,6 +171,10 @@ class SettingsWindowController: NSWindowController {
         }
         pollSlider.doubleValue = secondsToSlider(Settings.pollInterval)
         updatePollLabel()
+        loginCheckbox.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        if let pattern = Settings.excludeWorkflowPattern {
+            excludeField.stringValue = pattern
+        }
     }
 
     // Convert slider value (0-100) to seconds (1-3600) using logarithmic scale
@@ -181,6 +213,19 @@ class SettingsWindowController: NSWindowController {
 
     @objc private func sliderChanged(_ sender: NSSlider) {
         updatePollLabel()
+    }
+
+    @objc private func loginCheckboxChanged(_ sender: NSButton) {
+        do {
+            if sender.state == .on {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            // Revert checkbox on failure
+            sender.state = sender.state == .on ? .off : .on
+        }
     }
 
     private func updatePollLabel() {
@@ -252,6 +297,8 @@ class SettingsWindowController: NSWindowController {
         if KeychainService.setToken(token) {
             Settings.organization = org.isEmpty ? nil : org
             Settings.pollInterval = pollInterval
+            let excludePattern = excludeField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            Settings.excludeWorkflowPattern = excludePattern.isEmpty ? nil : excludePattern
             showStatus("Settings saved successfully!", isError: false)
             statusLabel.textColor = .systemGreen
 
